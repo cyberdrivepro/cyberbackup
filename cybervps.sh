@@ -184,7 +184,14 @@ handle_diagnostics_menu() {
     else
         echo -e "  ${C_DIM}(No log entries recorded)${C_RESET}"
     fi
-    ui_pause
+    echo
+    local diag_act=""
+    read -rp "Press Enter to return, or [E] to Export Report: " diag_act || true
+    if [[ "$diag_act" =~ ^[eE] ]]; then
+        echo
+        run_cybervps_script "$CYBERVPS_DIR/scripts/cybervps-export-diagnostics.sh"
+        ui_pause
+    fi
 }
 
 # Resilient Action Dispatcher (Error Boundary)
@@ -245,7 +252,7 @@ show_dashboard() {
 
     ui_menu_section "RECOVERY" \
         "[1] Restore Backup Snapshot" \
-        "[2] Fresh Rootless Rebuild" \
+        "[2] Fresh Install / Rootless Rebuild" \
         "[3] Migrate Backup From Another VPS"
 
     ui_menu_section "BACKUP & ARCHIVE" \
@@ -280,7 +287,10 @@ main_loop() {
     while true; do
         show_dashboard
         local choice=""
-        read -rp "Enter Selection: " choice || true
+        if ! read -rp "Enter Selection: " choice; then
+            echo -e "${C_DIM}EOF encountered. Exiting CyberVPS.${C_RESET}"
+            break
+        fi
         echo
 
         case "$choice" in

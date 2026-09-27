@@ -23,6 +23,11 @@ jobs:
           chmod +x scripts/secret-check.sh
           bash ./scripts/secret-check.sh
 
+      - name: Run Root Command Guard
+        run: |
+          chmod +x scripts/root-command-guard.sh
+          bash ./scripts/root-command-guard.sh
+
       - name: Run Automated Unit Tests
         run: |
           chmod +x tests/*.sh lib/*.sh *.sh
