@@ -1,0 +1,29 @@
+name: CyberVPS Validation CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify Bash Syntax (bash -n)
+        run: |
+          find . -type f -name "*.sh" -print0 | xargs -0 -n 1 bash -n
+
+      - name: Run Secret Security Scan
+        run: |
+          chmod +x scripts/secret-check.sh
+          bash ./scripts/secret-check.sh
+
+      - name: Run Automated Unit Tests
+        run: |
+          chmod +x tests/*.sh lib/*.sh *.sh
+          bash ./tests/run-tests.sh

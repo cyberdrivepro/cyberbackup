@@ -26,13 +26,20 @@
 - [x] Comprehensive verification engine (`lib/verify.sh`, `verify.sh`) with `--json` output
 - [x] Remote backup synchronization (`lib/remote.sh`, `upload-backup.sh`, `download-backup.sh`) with rclone/local storage support and retention policy
 - [x] Interactive terminal menu (`cybervps.sh`) with ASCII fallback
+- [x] Complete documentation suite (`ARCHITECTURE.md`, `BACKUP_FORMAT.md`, `RESTORE.md`, `MIGRATION.md`, `SECURITY.md`, `SERVICE_BACKENDS.md`, `TROUBLESHOOTING.md`, `CONTRIBUTING.md`, `LICENSE`, `README.md`)
+- [x] GitHub Actions CI workflow (`.github/workflows/validate.yml`) validating bash syntax, secret scans, and test suite
 - [x] Automated test runner (`tests/run-tests.sh`) with 8 unit tests: `test-config.sh`, `test-detect.sh`, `test-ports.sh`, `test-idempotency.sh`, `test-backup-layout.sh`, `test-migration-paths.sh`, `test-menu.sh`, `test-secret-filter.sh`
 
 ---
 
 ## 2. In Progress
-- [ ] Non-destructive real backup and safe restore/migration simulations on reference host
-- [ ] Complete documentation suite (`ARCHITECTURE.md`, `BACKUP_FORMAT.md`, `RESTORE.md`, `MIGRATION.md`, `SECURITY.md`, `SERVICE_BACKENDS.md`, `TROUBLESHOOTING.md`)
+- [ ] Safe live host backup validation and non-destructive restore/migration simulations on reference host
+
+---
+
+## 3. Remaining Work
+- [ ] Final live VPS health verification
+- [ ] Final release readiness signoff
 
 ---
 

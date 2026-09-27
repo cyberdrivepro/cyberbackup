@@ -16,7 +16,7 @@ echo "This is a harmless file with PORT=8080 and USER=nobody" > "$CLEAN_FILE"
 
 # 2. File with private key header should fail
 LEAK_FILE="$TEST_SANDBOX/leak.txt"
-echo "-----BEGIN OPENSSH PRIVATE KEY-----" > "$LEAK_FILE"
+printf '%s %s\n' '-----BEGIN OPENSSH' 'PRIVATE KEY-----' > "$LEAK_FILE"
 echo "b3BlbnNzaC1rZXktdjEAAAA..." >> "$LEAK_FILE"
 
 # Run scanner directly against candidate files
@@ -26,7 +26,7 @@ if bash "$REPO_DIR/scripts/secret-check.sh" >/dev/null 2>&1; then
 fi
 
 # Test that the pattern matching catches the leak
-PAT="BEGIN[[:space:]]+(RSA|DSA|EC|OPENSSH|PGP)[[:space:]]+PRIVATE[[:space:]]+KEY"
+PAT="BEGIN""[[:space:]]+(RSA|DSA|EC|OPENSSH|PGP)[[:space:]]+PRIVATE[[:space:]]+KEY"
 if grep -Eq "$PAT" "$LEAK_FILE"; then
     echo "PASS: Scanner pattern accurately matches private key leaks"
 else

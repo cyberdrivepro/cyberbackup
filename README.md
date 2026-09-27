@@ -1,196 +1,177 @@
-# CyberVPS Backup & Recovery
+# CyberVPS
 
-A portable disaster-recovery kit for a restricted user-space hosting VPS environment.
-Designed to survive a home-directory wipe: clone the repo, run `bash cybervps.sh`,
-and choose restore or fresh rebuild.
+[![CyberVPS Validation CI](https://github.com/cyberdrivepro/cyberbackup/actions/workflows/validate.yml/badge.svg)](https://github.com/cyberdrivepro/cyberbackup/actions/workflows/validate.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Format: v2](https://img.shields.io/badge/Backup%20Format-v2-success.svg)](docs/BACKUP_FORMAT.md)
 
-This repository intentionally contains **no secrets** and **no large backup archives**.
-Secrets and large snapshots belong in external storage (rclone remote, Drive, object storage, etc.).
+**Portable Non-Root Linux VPS Hosting, Backup, Migration, Disaster Recovery, and Fresh Rebuild Toolkit.**
 
-## Quick reference
+CyberVPS empowers developers and sysadmins to deploy, persist, backup, migrate, and rebuild complete user-space application environments on **ordinary, unprivileged non-root Linux VPS accounts** without requiring `sudo`, root privileges, Docker, or host package manager modifications.
 
-### Normal backup
+---
 
-```bash
-cd ~/cyberbackup
-./backup-now.sh
-```
-
-This creates a versioned backup archive, `latest.json`, and `SHA256SUMS`.
-
-### Upload backup to remote storage
+## ⚡ Quick Start
 
 ```bash
-./upload-backup.sh
-```
-
-`upload-backup.sh` uses `rclone` and the configured remote in `remote.conf`.
-It uploads the latest snapshot, `latest.json`, and `SHA256SUMS`.
-
-### Complete disaster recovery
-
-```bash
-git clone <YOUR_RECOVERY_REPO> cyberbackup
+git clone https://github.com/cyberdrivepro/cyberbackup.git
 cd cyberbackup
 bash cybervps.sh
 ```
 
-Then choose:
+Upon launch, CyberVPS inspects the host and renders a polished interactive menu:
 
-1. **Restore from CyberBackup** — download/verify/extract a backup archive and
-   restore the user-space hosting environment.
-2. **Fresh Install / Rebuild** — rebuild the user-space hosting environment from
-   manifests and templates, starting from nearly nothing.
-
-After either option, confirm with:
-
-```bash
-hosting-status
-vps-status
-~/services/healthcheck.sh
+```
+╔══════════════════════════════════════════════════════╗
+║                       CyberVPS                       ║
+║        Portable Non-Root Linux Recovery Toolkit      ║
+╚══════════════════════════════════════════════════════╝
+Detected Profile:
+  Host: vps-01 | User: alice | Arch: x86_64
+  Home: /home/alice
+  OS:   Debian GNU/Linux 12 (bookworm) (glibc 2.36)
+--------------------------------------------------------
+  [1] Restore Backup to This VPS
+  [2] Fresh Install / Rebuild
+  [3] Migrate Backup From Another VPS
+  [4] Create Backup
+  [5] Upload Backup
+  [6] Download Backup
+  [7] Verify Current VPS
+  [8] CyberVPS Status
+  [9] Configuration
+  [0] Exit
+--------------------------------------------------------
 ```
 
-## Design principles
+---
 
-- **Snapshot + manifests.** Backups contain a fast-restore snapshot and reproducible
-  manifests. If a copied environment is incompatible on another host, `Option 2`
-  can rebuild from manifests.
-- **User-space only.** No `sudo`, no `apt install`, no `PRoot`, no Docker/Podman,
-  no systemd, no GUI.
-- **Secrets never in Git.** `.env`, tokens, SSH private keys, Cloudflare credentials,
-  database passwords, and rclone credentials are excluded by default.
-- **Large archives live externally.** Backup archives are stored in rclone remotes
-  or similar external storage, not in Git history.
-- **Idempotent.** Every script can be run multiple times safely.
-- **Safe restore.** Before overwriting, existing important config is backed up into
-  a timestamped `pre-restore-*` directory.
-- **Integrity first.** Restore verifies SHA256 before extracting and stops if the
-  checksum fails.
+## 🌟 Key Capabilities
 
-## Directory layout
+1. **Zero Root / Sudo Required:** Runs completely inside user-space. Zero `sudo`, `su`, `apt`, `dnf`, or root daemon modifications.
+2. **Disaster Recovery:** Rebuilds entire runtime environments (Python, Node, Go, Rust, PM2, Cloudflared) after near-total `$HOME` loss.
+3. **Cross-VPS Migration:** Intelligently migrates configurations across VPS providers, translating paths (`/home/userA` to `/home/userB`) and reallocating conflicting ports.
+4. **Dynamic Port Allocator:** Discovers free unprivileged localhost ports (`>= 1024`), ensuring zero collisions on multi-user VPS hosts.
+5. **Localhost-Only Security:** All internal listeners (Redis, Nginx, APIs, supervisor) bind strictly to `127.0.0.1` by default.
+6. **Multi-Backend Process Persistence:** Automatically selects the best persistence backend available (`systemd --user`, `tmux`, `screen`, or `nohup` + PID tracking).
+7. **Login-Triggered Recovery:** Idempotent shell startup integration restores services automatically upon SSH login without claiming true boot autostart.
+8. **Automated Secret Filtering:** Automated scanner verifies that no credentials, tokens, or private keys are committed or exported in plaintext.
+9. **Optional Encrypted Secrets:** Encrypts sensitive credentials via OpenSSL AES-256 with PBKDF2 using an interactive passphrase.
+
+---
+
+## 📁 Repository Architecture
 
 ```
 cyberbackup/
-├── cybervps.sh          # main entry script (menu)
-├── backup-now.sh        # create a versioned backup
-├── restore.sh           # restore from backup archive
-├── fresh-install.sh     # fresh user-space rebuild
-├── verify.sh            # verify current environment health
-├── upload-backup.sh     # upload latest backup to remote
-├── download-backup.sh   # download backup from remote
-├── VERSION              # backup format version
-├── remote.example.conf  # example rclone remote config template
-├── .gitignore
-├── README.md
-├── manifests/
-│   ├── system.txt
-│   ├── files.txt
-│   ├── sha256sums.txt
-│   ├── micromamba-env.yml
-│   ├── micromamba-explicit.txt
-│   ├── micromamba-list.txt
-│   ├── pip-freeze.txt
-│   ├── npm-global.txt
-│   ├── node-version.txt
-│   ├── rust-version.txt
-│   ├── cargo-installed.txt
-│   ├── go-version.txt
-│   ├── go-env.txt
-│   ├── ports.txt
-│   └── services.txt
-├── config/
-├── scripts/
-├── templates/
-├── payload/
-├── downloads/
-└── logs/
+├── cybervps.sh           # Master interactive terminal interface
+├── backup-now.sh         # CLI entry point for creating snapshots
+├── restore.sh            # CLI entry point for restoring backups
+├── migrate.sh            # CLI entry point for cross-host migration
+├── fresh-install.sh      # CLI entry point for zero-state rebuilds
+├── verify.sh             # System health & compatibility verifier
+├── upload-backup.sh      # Remote storage upload helper
+├── download-backup.sh    # Remote storage download helper
+├── VERSION               # Current CyberVPS version
+├── LICENSE               # MIT License
+├── README.md             # Project documentation
+├── CHANGELOG.md          # Release history
+├── SECURITY.md           # Security policy and credential handling
+├── CONTRIBUTING.md       # Development and contribution guide
+├── remote.example.conf   # Template for remote storage providers
+├── lib/
+│   ├── common.sh         # Locks, constrained env parser, download helpers
+│   ├── logging.sh        # Structured logging with severity levels
+│   ├── detect.sh         # Identity, architecture, libc, and hardware detection
+│   ├── ports.sh          # Dynamic rootless port allocator
+│   ├── install.sh        # User-space dependency installer engine
+│   ├── services.sh       # Process backend abstraction & CLI helpers
+│   ├── backup.sh         # Format v2 backup engine & manifest generation
+│   ├── restore.sh        # Safe restore engine & rollback management
+│   ├── migration.sh      # Cross-VPS comparison and path translation
+│   ├── verify.sh         # Categorized verification engine (supports --json)
+│   └── remote.sh         # Rclone and remote storage synchronization
+├── tests/                # Automated test suite
+│   ├── test-detect.sh
+│   ├── test-ports.sh
+│   ├── test-config.sh
+│   ├── test-idempotency.sh
+│   ├── test-backup-layout.sh
+│   ├── test-migration-paths.sh
+│   ├── test-menu.sh
+│   ├── test-secret-filter.sh
+│   └── run-tests.sh      # Test suite runner
+└── docs/                 # Detailed technical specifications
+    ├── STATUS.md
+    ├── ARCHITECTURE.md
+    ├── BACKUP_FORMAT.md
+    ├── RESTORE.md
+    ├── MIGRATION.md
+    ├── SERVICE_BACKENDS.md
+    └── TROUBLESHOOTING.md
 ```
 
-## Remote configuration
+---
 
-Copy `remote.example.conf` to `remote.conf` and fill in your real values.
-**Do not commit `remote.conf` if it contains real credentials.**
+## 💻 CLI Usage
 
-Example:
+All tasks can be executed non-interactively or in automated scripts:
 
-```ini
-CYBERBACKUP_REMOTE="myremote:CyberVPSBackup"
-# CYBERBACKUP_URL=""
-# CYBERBACKUP_LOCAL=""
+### Create a Portable Backup
+```bash
+bash ./backup-now.sh [options]
+
+# Options:
+#   --include-shared     Include ~/shared in a separate archive
+#   --encrypt-secrets    Create an encrypted archive of secrets using OpenSSL
+#   --dry-run            Simulate backup without creating archive
+#   --verbose            Enable debug logging
 ```
 
-## Secrets
+### Restore a Backup
+```bash
+bash ./restore.sh --archive downloads/cybervps-backup-YYYYMMDD-HHMMSS.tar.zst
+# Supports --dry-run and --force-rebuild
+```
 
-The system can optionally encrypt secrets using `openssl` AES-256 with PBKDF2.
-Encryption password is prompted interactively and never echoed.
+### Migrate Backup From Another VPS
+```bash
+bash ./migrate.sh --archive downloads/cybervps-backup-YYYYMMDD-HHMMSS.tar.zst
+```
 
-Secrets are excluded from the normal backup by default. Use the optional encrypted
-secrets backup path for sensitive material.
+### Fresh Rebuild from Zero
+```bash
+bash ./fresh-install.sh
+```
 
-## Shared storage
+### Health Verification
+```bash
+bash ./verify.sh
+# Machine-readable JSON output:
+bash ./verify.sh --json
+```
 
-`$HOME/shared` can be large. It is **not** included in the main system backup by
-default. Use `--include-shared` or `CYBERBACKUP_INCLUDE_SHARED=1` to include it as
-a separate archive.
+---
 
-## Supported recovery sources
+## 🔒 Security Principles
 
-- Local file
-- Mounted/shared directory
-- rclone remote
-- HTTPS download URL
+- **Zero Root Privilege Escalation:** CyberVPS never runs `sudo` or modifies system directories.
+- **Provider Compliance:** CyberVPS does **not** disguise process names or implement watchdog bypasses. If a provider policy prohibits a component, it disables it and logs a clear notice.
+- **Localhost Default:** Network services bind strictly to `127.0.0.1`.
+- **Integrity Verification:** Every snapshot generates SHA256 checksums in `SHA256SUMS` and `latest.json`.
+- **Secret Scanning:** Run `bash ./scripts/secret-check.sh` at any time to verify repository safety.
 
-## Current environment assumptions
+---
 
-- Linux x86_64
-- User: `srhfqtos`
-- Home: `/home/srhfqtos`
-- Micromamba root: `$HOME/apps/micromamba`
-- Hosting environment name: `hosting`
-- Python 3.12
-- Node.js 22
-- Redis user instance on 127.0.0.1:6380
-- nginx on 127.0.0.1:8080
-- Supervisor via `svcd-h24` / `h24ctl`
-- PM2 home: `$HOME/.pm2`
-- tmux session: `hosting24`
-- Cloudflared helper: `cloudflare-quick-tunnel.sh PORT`
+## 🧪 Testing
 
-## Verification
-
-Run `verify.sh` after restore or rebuild to check the health of the environment:
-
-- micromamba
-- hosting environment
-- Python
-- pip
-- Node/npm/pnpm/PM2
-- Rust/Cargo
-- Go
-- Git
-- SQLite
-- Redis user service
-- nginx
-- Supervisor
-- cloudflared
-- tmux hosting24
-- scheduler
-- healthcheck
-
-## Disaster simulation (safe)
-
-Do not delete your real setup to test. Instead use the validation path that checks
-whether the backup contains enough information for restoration and verifies every
-critical file referenced by `restore.sh` exists.
-
-## Recovery flow reminder
+CyberVPS includes an automated, non-destructive test suite that runs in temporary sandboxes:
 
 ```bash
-git clone <repo> cyberbackup
-cd cyberbackup
-bash cybervps.sh
+bash ./tests/run-tests.sh
 ```
 
-Option 1: **RESTORE EXISTING CYBERBACKUP**
+---
 
-Option 2: **FRESH USER-SPACE REBUILD**
+## 📄 License
+
+This project is licensed under the [MIT License](LICENSE).

@@ -34,7 +34,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `tests/test-secret-filter.sh`: Validates detection of sensitive pattern leaks.
 - Security scanner:
   - `scripts/secret-check.sh`: Automated pre-commit/pre-push scanner checking for credentials, API tokens, private keys, and forbidden backup archives without leaking secret values.
-- Documentation tracking:
+- Continuous Integration:
+  - `.github/workflows/validate.yml`: Lightweight GitHub Actions workflow validating bash syntax with `bash -n`, running secret detection, and executing unit tests.
+- Comprehensive Documentation Suite:
+  - `README.md`: Complete guide covering architecture, quickstart, menu options, CLI commands, security, and portability.
+  - `docs/ARCHITECTURE.md`: Technical specification covering modular layers, lifecycle, and design principles.
+  - `docs/BACKUP_FORMAT.md`: Format version 2 specification, JSON schema, and exclusions.
+  - `docs/RESTORE.md`: Disaster recovery walkthrough, safety snapshots, and path translation.
+  - `docs/MIGRATION.md`: Cross-VPS migration guide.
+  - `docs/SERVICE_BACKENDS.md`: Process persistence and provider compliance details.
+  - `docs/TROUBLESHOOTING.md`: Common operational issues and solutions.
+  - `SECURITY.md`, `CONTRIBUTING.md`, `LICENSE` (MIT).
   - `docs/STATUS.md`: Live tracking of project milestones, test matrix, and limitations.
 
 ### Changed

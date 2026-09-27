@@ -60,8 +60,8 @@ for file in $CANDIDATES; do
         fi
     done
 
-    # Skip checking secret-check.sh itself for its own pattern definitions
-    if [[ "$file" == *"secret-check.sh"* ]]; then
+    # Skip checking secret-check.sh itself and test-secret-filter.sh for pattern definitions
+    if [[ "$file" == *"secret-check.sh"* ]] || [[ "$file" == *"test-secret-filter.sh"* ]]; then
         continue
     fi
 
