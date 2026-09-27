@@ -15,11 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `lib/ports.sh`: Dynamic rootless TCP port allocator ensuring collision-free port assignments on multi-user VPS hosts, constrained to localhost (`127.0.0.1`).
   - `lib/install.sh`: User-space dependency installer engine supporting Micromamba, Python tools, Node/PM2, Go, Rust, and Cloudflared with architecture mapping and HTTPS downloads.
   - `lib/services.sh`: Process backend abstraction supporting systemd --user, tmux, screen, and nohup+PID tracking with unified commands (`cybervps-*`), login-triggered recovery manager, and provider restriction safety.
+  - `lib/backup.sh`: Portable backup engine with format version 2, dynamic manifest capture, separate shared data archive handling, optional AES-256 encrypted secrets, integrity self-checks, and machine-readable `latest.json` generation.
 - Automated test framework under `tests/` with `run-tests.sh` runner and unit tests:
   - `tests/test-detect.sh`: Validates identity and architecture detection logic.
   - `tests/test-ports.sh`: Tests port scanning, free port discovery, and reservation idempotency.
   - `tests/test-config.sh`: Tests safe config parsing, user-space locking, and marked-block manipulation.
   - `tests/test-idempotency.sh`: Verifies idempotency of login recovery blocks, CLI helper creation, and process backend detection.
+  - `tests/test-backup-layout.sh`: Tests snapshot creation, JSON metadata generation, SHA256SUMS integrity, and cache/socket exclusion rules.
 - Security scanner:
   - `scripts/secret-check.sh`: Automated pre-commit/pre-push scanner checking for credentials, API tokens, private keys, and forbidden backup archives without leaking secret values.
 - Documentation tracking:

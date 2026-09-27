@@ -19,12 +19,12 @@
 - [x] Rootless installer engine (`lib/install.sh`) for Micromamba, Python tools, Node/PM2, Go, Rust, and Cloudflared following safe binary priorities
 - [x] Service backend abstraction (`lib/services.sh`) supporting systemd --user, tmux, screen, and nohup+PID tracking with unified commands (`cybervps-*`)
 - [x] Login recovery manager with idempotent marked blocks
-- [x] Automated test runner (`tests/run-tests.sh`) with unit tests: `test-config.sh`, `test-detect.sh`, `test-ports.sh`, `test-idempotency.sh`
+- [x] Portable backup engine upgrade (`lib/backup.sh`, `backup-now.sh`) with format version 2, JSON metadata, integrity checks, and separate shared storage
+- [x] Automated test runner (`tests/run-tests.sh`) with unit tests: `test-config.sh`, `test-detect.sh`, `test-ports.sh`, `test-idempotency.sh`, `test-backup-layout.sh`
 
 ---
 
 ## 2. In Progress
-- [ ] Portable backup engine upgrade (`lib/backup.sh`, `backup-now.sh`) with format version 2, JSON metadata, integrity checks, and separate shared storage
 - [ ] Safe restore engine upgrade (`lib/restore.sh`, `restore.sh`) with pre-restore snapshot, dry-run, path translation, and verification
 
 ---
