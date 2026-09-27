@@ -125,3 +125,15 @@ load_ports_env() {
         parse_env_file "$PORTS_CONFIG_FILE"
     fi
 }
+
+# Initialize ports configuration with safe defaults if not already present
+init_ports_config() {
+    ensure_directory "$(dirname "$PORTS_CONFIG_FILE")" 0700
+    if [ ! -f "$PORTS_CONFIG_FILE" ]; then
+        touch "$PORTS_CONFIG_FILE"
+    fi
+    reserve_or_select_port "WEB_PORT" 8080 >/dev/null 2>&1 || true
+    reserve_or_select_port "WEB_PROXY_PORT" 8081 >/dev/null 2>&1 || true
+    reserve_or_select_port "REDIS_PORT" 6380 >/dev/null 2>&1 || true
+    log_debug "Ports configuration initialized at $PORTS_CONFIG_FILE"
+}

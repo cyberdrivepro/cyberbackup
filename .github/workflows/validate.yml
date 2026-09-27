@@ -28,6 +28,11 @@ jobs:
           chmod +x scripts/root-command-guard.sh
           bash ./scripts/root-command-guard.sh
 
+      - name: Run Function Dependency Audit
+        run: |
+          chmod +x scripts/audit-bash-dependencies.sh
+          bash ./scripts/audit-bash-dependencies.sh
+
       - name: Run Automated Unit Tests
         run: |
           chmod +x tests/*.sh lib/*.sh *.sh

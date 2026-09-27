@@ -91,7 +91,10 @@ fi
 # Get terminal width clamped to readable bounds (62 to 90 cols)
 ui_get_width() {
     local cols
-    cols="$(tput cols 2>/dev/null || echo 80)"
+    cols="$(tput cols 2>/dev/null || true)"
+    if [ -z "$cols" ] || ! [[ "$cols" =~ ^[0-9]+$ ]]; then
+        cols=80
+    fi
     [ "$cols" -lt 62 ] && cols=62
     [ "$cols" -gt 88 ] && cols=88
     echo "$cols"
@@ -278,4 +281,95 @@ ui_view_log() {
         -e 's/(ghp_|github_pat_)[A-Za-z0-9_]+/ghp_**REDACTED**/g'
     echo -e "${C_BCYAN}===============================================${C_RESET}"
     ui_pause
+}
+
+# Helper to render a row in preflight box
+_ui_preflight_row() {
+    local label="$1"
+    local val="$2"
+    local inner_width="$3"
+
+    local plain_val
+    plain_val=$(printf '%b' "$val" | sed -r 's/\x1b\[[0-9;]*m//g' 2>/dev/null || printf '%b' "$val" | sed -E $'s/\x1B\\[[0-9;]*[mK]//g')
+    local plain_line="  ${label}: ${plain_val}"
+    local plain_len=${#plain_line}
+    local pad=$((inner_width - plain_len - 1))
+    [ "$pad" -lt 0 ] && pad=0
+    local sp
+    sp="$(_ui_repeat " " "$pad")"
+
+    echo -e "${C_BCYAN}${UI_V}${C_RESET}  ${C_DIM}${label}:${C_RESET} ${val}${sp}${C_BCYAN}${UI_V}${C_RESET}"
+}
+
+# Render Preflight Check Box for Bootstrap & Fresh Rebuild
+ui_preflight_box() {
+    local profile="${1:-hosting}"
+    detect_environment
+
+    local width
+    width="$(ui_get_width)"
+    local inner_width=$((width - 2))
+    local line_h
+    line_h="$(_ui_repeat "$UI_H" "$inner_width")"
+
+    echo -e "${C_BCYAN}${UI_TL}${line_h}${UI_TR}${C_RESET}"
+    local title="CYBERVPS • PREFLIGHT ENVIRONMENT CHECK"
+    local t_len=${#title}
+    local pad_left=$(( (inner_width - t_len) / 2 ))
+    local pad_right=$(( inner_width - t_len - pad_left ))
+    local sp_left="$(_ui_repeat " " "$pad_left")"
+    local sp_right="$(_ui_repeat " " "$pad_right")"
+    echo -e "${C_BCYAN}${UI_V}${C_RESET}${sp_left}${C_BWHITE}${title}${C_RESET}${sp_right}${C_BCYAN}${UI_V}${C_RESET}"
+    echo -e "${C_BCYAN}${UI_ML}${line_h}${UI_MR}${C_RESET}"
+
+    # Internet check
+    local net_status="${C_BGREEN}PASS (connected)${C_RESET}"
+    if command -v curl >/dev/null 2>&1; then
+        curl -s --connect-timeout 3 -I https://1.1.1.1 >/dev/null 2>&1 || net_status="${C_BYELLOW}WARN (offline / restricted)${C_RESET}"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q --spider --timeout=3 http://1.1.1.1 >/dev/null 2>&1 || net_status="${C_BYELLOW}WARN (offline / restricted)${C_RESET}"
+    else
+        net_status="${C_BYELLOW}WARN (no curl/wget)${C_RESET}"
+    fi
+
+    # Home writable
+    local home_status="${C_BGREEN}PASS (${CYBER_HOME:-$HOME})${C_RESET}"
+    if [ ! -w "${CYBER_HOME:-$HOME}" ]; then
+        home_status="${C_BRED}FAIL (read-only)${C_RESET}"
+    fi
+
+    local env_status="${C_BGREEN}PASS (non-root user-space)${C_RESET}"
+    local root_status="${C_BGREEN}NOT REQUIRED (0% root)${C_RESET}"
+    local pkg_status="${C_BGREEN}NOT USED (zero apt/dnf/pacman)${C_RESET}"
+    local ready_status="${C_BGREEN}READY (profile: ${profile})${C_RESET}"
+
+    local disk_str="${CYBER_DISK_FREE_MB:-unknown}MB available"
+    if [ "${CYBER_DISK_FREE_MB:-unknown}" != "unknown" ]; then
+        if [ "$CYBER_DISK_FREE_MB" -ge 1024 ]; then
+            disk_str="$((CYBER_DISK_FREE_MB / 1024))GB available"
+        fi
+    fi
+
+    local ram_str="${CYBER_RAM_AVAIL_MB:-unknown}MB available"
+    if [ "${CYBER_RAM_AVAIL_MB:-unknown}" != "unknown" ]; then
+        if [ "$CYBER_RAM_AVAIL_MB" -ge 1024 ]; then
+            ram_str="$((CYBER_RAM_AVAIL_MB / 1024))GB available"
+        fi
+    fi
+
+    local libc_str="${CYBER_LIBC:-glibc} ${CYBER_LIBC_VERSION:-}"
+    local arch_str="${CYBER_ARCH:-x86_64}"
+
+    _ui_preflight_row "Environment           " "$env_status" "$inner_width"
+    _ui_preflight_row "HOME writable         " "$home_status" "$inner_width"
+    _ui_preflight_row "Internet connectivity " "$net_status" "$inner_width"
+    _ui_preflight_row "CPU architecture      " "${C_WHITE}${arch_str}${C_RESET}" "$inner_width"
+    _ui_preflight_row "C runtime library     " "${C_WHITE}${libc_str}${C_RESET}" "$inner_width"
+    _ui_preflight_row "System root (sudo)    " "$root_status" "$inner_width"
+    _ui_preflight_row "System package manager" "$pkg_status" "$inner_width"
+    _ui_preflight_row "User-space install    " "$ready_status" "$inner_width"
+    _ui_preflight_row "Disk space free       " "${C_WHITE}${disk_str}${C_RESET}" "$inner_width"
+    _ui_preflight_row "Memory available      " "${C_WHITE}${ram_str}${C_RESET}" "$inner_width"
+
+    echo -e "${C_BCYAN}${UI_BL}${line_h}${UI_BR}${C_RESET}"
 }

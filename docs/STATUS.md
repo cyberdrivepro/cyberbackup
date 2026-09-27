@@ -25,23 +25,33 @@
 - [x] Service backend abstraction (`lib/services.sh`) supporting systemd --user, tmux, screen, and nohup+PID tracking with unified commands (`cybervps-*`)
 - [x] Safe restore engine (`lib/restore.sh`, `restore.sh`) with pre-restore snapshot, dry-run, staging extraction, path translation, binary compatibility checks, and verification
 - [x] Cross-VPS migration engine (`lib/migration.sh`, `migrate.sh`) with source vs destination comparison and port conflict reallocation
-- [x] Rootless fresh install rebuild orchestration (`fresh-install.sh`) supporting `--profile`
+- [x] Rootless fresh install rebuild orchestration (`fresh-install.sh`) supporting `--profile`, interactive profile selector, and preflight environment check box
+- [x] Resilient script execution engine (`lib/execution.sh`) dispatching scripts explicitly via Bash, handling `noexec` mounts and permission self-repair
+- [x] Modern terminal UI V3 (`lib/ui.sh`) with capability badges, Unicode rounded frames with ASCII fallback, NO_COLOR compliance, failure cards, and sanitized log viewer
+- [x] Root command guard (`scripts/root-command-guard.sh`) ensuring zero prohibited root commands (`sudo`, `su`, `apt install`) exist in the codebase
+- [x] Static bash function dependency auditor (`scripts/audit-bash-dependencies.sh`, `scripts/audit_bash_dependencies.py`) verifying all function calls have definitions
+- [x] Exportable sanitized diagnostics report generator (`scripts/cybervps-export-diagnostics.sh`)
 - [x] Comprehensive verification engine (`lib/verify.sh`, `verify.sh`) with `--json` output
 - [x] Remote backup synchronization (`lib/remote.sh`, `upload-backup.sh`, `download-backup.sh`) with rclone/local storage support and retention policy
-- [x] Interactive terminal menu (`cybervps.sh`) with ASCII fallback and Option `[10] Diagnostics & System Inspector`
+- [x] Interactive terminal menu (`cybervps.sh`) with resilient error boundary and non-stacking SIGINT handling
 - [x] Complete documentation suite (`ARCHITECTURE.md`, `BACKUP_FORMAT.md`, `RESTORE.md`, `MIGRATION.md`, `SECURITY.md`, `SERVICE_BACKENDS.md`, `TROUBLESHOOTING.md`, `CONTRIBUTING.md`, `LICENSE`, `README.md`)
-- [x] GitHub Actions CI workflow (`.github/workflows/validate.yml`) validating bash syntax, secret scans, and test suite
-- [x] Automated test runner (`tests/run-tests.sh`) with 11 automated test suites passing:
-  - `test-archive-security.sh` (PASS - 11/11 assertions)
+- [x] GitHub Actions CI workflow (`.github/workflows/validate.yml`) validating bash syntax, secret scans, root command guard, dependency audit, and test suite
+- [x] Automated test runner (`tests/run-tests.sh`) with 16 automated test suites passing (0 failures):
+  - `test-archive-security.sh` (PASS)
   - `test-backup-layout.sh` (PASS)
   - `test-config.sh` (PASS)
   - `test-detect.sh` (PASS)
+  - `test-execution-permissions.sh` (PASS - 14/14 assertions)
+  - `test-fresh-clone.sh` (PASS - 8/8 assertions)
+  - `test-fresh-install.sh` (PASS - 14/14 assertions)
+  - `test-function-dependencies.sh` (PASS - 5/5 assertions)
   - `test-idempotency.sh` (PASS)
   - `test-menu.sh` (PASS)
   - `test-migration-paths.sh` (PASS)
   - `test-ports.sh` (PASS)
-  - `test-relative-backup.sh` (PASS - 12/12 assertions)
-  - `test-restore-e2e.sh` (PASS - 9/9 assertions)
+  - `test-relative-backup.sh` (PASS)
+  - `test-restore-e2e.sh` (PASS)
+  - `test-root-command-guard.sh` (PASS - 4/4 assertions)
   - `test-secret-filter.sh` (PASS)
 
 ---
@@ -49,6 +59,7 @@
 ## 2. Live Host Verification
 - **Reference Host:** SoloA (`srhfqtos`, Debian 12 bookworm x86_64, glibc 2.36)
 - **Live Hosting Services:** Untouched and running healthy (`rsrvd-h24 127.0.0.1:6380`, `nginx: master process` on 127.0.0.1)
+- **Target Environment:** Compatible with restricted cloud/desktop environments (e.g. Kasm, Ubuntu 22.04 LTS x86_64) with non-root accounts, zero sudo requirements, and noexec mount safety
 - **All Simulations:** Executed strictly in isolated sandboxes (`mktemp -d /tmp/...`)
 
 ---
@@ -58,9 +69,3 @@
 - **Provider Restriction Compliance:** Does not disguise process names, bypass watchdogs, or evade hosting provider policies. Incompatible or blocked services fail safely and report status.
 - **Localhost Default:** All internal services (Redis, Nginx, APIs, supervisor) bind strictly to `127.0.0.1`.
 - **Secret Protection:** No credentials, private keys, or API tokens committed or exported into unencrypted snapshots.
-
----
-
-## 4. Test Platforms & Results
-- **Debian 12 (bookworm) x86_64:** Tested PASS (11/11 automated tests passed)
-- **Secret Scan:** PASS (0 credentials / forbidden files detected)

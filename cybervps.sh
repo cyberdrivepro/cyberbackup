@@ -279,10 +279,22 @@ show_dashboard() {
     echo
 }
 
+_SIGINT_COUNT=0
+handle_sigint() {
+    _SIGINT_COUNT=$((_SIGINT_COUNT + 1))
+    if [ "$_SIGINT_COUNT" -ge 2 ]; then
+        echo -e "\n${C_BCYAN}Exiting CyberVPS. Goodbye!${C_RESET}"
+        exit 0
+    fi
+    echo
+    echo -e "${C_BYELLOW}[Interrupted]${C_RESET} ${C_WHITE}Press Ctrl+C again or [0] to exit, or Enter to continue.${C_RESET}"
+    (sleep 3 && _SIGINT_COUNT=0) >/dev/null 2>&1 &
+}
+
 # Master interactive event loop
 main_loop() {
     # Trap Ctrl+C cleanly in interactive menu
-    trap 'echo -e "\n${C_DIM}Press [0] to exit CyberVPS.${C_RESET}"; sleep 1' SIGINT
+    trap 'handle_sigint' SIGINT
 
     while true; do
         show_dashboard

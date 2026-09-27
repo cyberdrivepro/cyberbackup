@@ -67,7 +67,7 @@ interpret_exit_code() {
             echo "Execution denied (permission issue or restrictive mount policy)"
             ;;
         127)
-            echo "Command or script file not found in PATH / directory"
+            echo "Command or internal function not found (missing binary, script, or undefined function)"
             ;;
         130)
             echo "Operation cancelled by user (SIGINT / Ctrl+C)"

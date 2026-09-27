@@ -231,7 +231,6 @@ install_profile() {
     local inst_dir="$CYBERVPS_ROOT/installers"
 
     ensure_user_paths
-    ensure_cybervps_profile
 
     case "$profile" in
         minimal)
@@ -240,6 +239,7 @@ install_profile() {
             ;;
         hosting)
             log_header "Installing Profile: Hosting"
+            [ -f "$inst_dir/python.sh" ] && bash "$inst_dir/python.sh"
             [ -f "$inst_dir/node.sh" ] && bash "$inst_dir/node.sh"
             [ -f "$inst_dir/redis.sh" ] && bash "$inst_dir/redis.sh"
             [ -f "$inst_dir/nginx.sh" ] && bash "$inst_dir/nginx.sh"
