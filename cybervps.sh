@@ -19,9 +19,11 @@ source "$CYBERVPS_DIR/lib/ports.sh"
 source "$CYBERVPS_DIR/lib/ui.sh"
 # shellcheck source=lib/execution.sh
 source "$CYBERVPS_DIR/lib/execution.sh"
+# shellcheck source=lib/cyberroot.sh
+source "$CYBERVPS_DIR/lib/cyberroot.sh"
 
 # Ensure user PATH includes user-space locations
-export PATH="$HOME/bin:$HOME/apps/micromamba/envs/hosting/bin:$HOME/.cargo/bin:$HOME/go/bin:$HOME/apps/go/bin:$PATH"
+export PATH="$HOME/.local/bin:$HOME/bin:$HOME/apps/micromamba/envs/hosting/bin:$HOME/.cargo/bin:$HOME/go/bin:$HOME/apps/go/bin:$PATH"
 
 # Run self-repair routine
 run_self_repair() {
@@ -264,6 +266,7 @@ show_dashboard() {
         "[7] Run VPS Health Verification" \
         "[8] View CyberVPS Status & Services" \
         "[9] Configuration Manager" \
+        "[C] CyberRoot Rootless Linux Runtime" \
         "[D] System Diagnostics & Inspector" \
         "[R] Self-Repair & Permission Normalizer"
 
@@ -332,6 +335,9 @@ main_loop() {
                 ;;
             9)
                 handle_config_menu
+                ;;
+            [cC]*)
+                handle_cyberroot_menu
                 ;;
             10|[dD]*)
                 handle_diagnostics_menu
