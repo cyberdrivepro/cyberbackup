@@ -16,14 +16,16 @@
 - [x] Core common utility library (`lib/common.sh`) with flock/directory atomic locking, constrained KEY=VALUE config parser, and idempotent marked-block manager
 - [x] Portable environment and architecture detection (`lib/detect.sh`) with zero hardcoded identities, architecture normalization (x86_64, aarch64), libc detection (glibc, musl), and resource profiling
 - [x] Dynamic rootless port allocation library (`lib/ports.sh`) with localhost-only safety (127.0.0.1), unprivileged port auto-allocation, and idempotent persistence in `ports.env`
-- [x] Automated test runner (`tests/run-tests.sh`) with unit tests: `test-config.sh`, `test-detect.sh`, `test-ports.sh`
+- [x] Rootless installer engine (`lib/install.sh`) for Micromamba, Python tools, Node/PM2, Go, Rust, and Cloudflared following safe binary priorities
+- [x] Service backend abstraction (`lib/services.sh`) supporting systemd --user, tmux, screen, and nohup+PID tracking with unified commands (`cybervps-*`)
+- [x] Login recovery manager with idempotent marked blocks
+- [x] Automated test runner (`tests/run-tests.sh`) with unit tests: `test-config.sh`, `test-detect.sh`, `test-ports.sh`, `test-idempotency.sh`
 
 ---
 
 ## 2. In Progress
-- [ ] Rootless installer engine (`lib/install.sh`) for Micromamba, Python tools, Node/PM2, Go, Rust, and Cloudflared
-- [ ] Service backend abstraction (`lib/services.sh`) supporting systemd --user, tmux, screen, and nohup+PID tracking with unified commands (`cybervps-*`)
-- [ ] Login recovery manager with idempotent marked blocks
+- [ ] Portable backup engine upgrade (`lib/backup.sh`, `backup-now.sh`) with format version 2, JSON metadata, integrity checks, and separate shared storage
+- [ ] Safe restore engine upgrade (`lib/restore.sh`, `restore.sh`) with pre-restore snapshot, dry-run, path translation, and verification
 
 ---
 
