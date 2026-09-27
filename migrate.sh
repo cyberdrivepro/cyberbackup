@@ -1,26 +1,24 @@
 #!/usr/bin/env bash
-# restore.sh — CyberVPS restore CLI entry point
+# migrate.sh — CyberVPS cross-host migration CLI entry point
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
-# shellcheck source=lib/restore.sh
-source "$SCRIPT_DIR/lib/restore.sh"
+# shellcheck source=lib/migration.sh
+source "$SCRIPT_DIR/lib/migration.sh"
 
 ARCHIVE_PATH=""
 DRY_RUN=0
-FORCE_REBUILD=0
 
 show_usage() {
     cat << EOF
-CyberVPS Restore CLI
+CyberVPS Migration CLI
 Usage: $(basename "$0") [options] [archive_path]
 
 Options:
-  --archive <path>     Path to the backup archive to restore
-  --dry-run            Simulate restore process without modifying files
-  --force-rebuild      Force recreation of user-space environments
+  --archive <path>     Path to the backup archive to migrate
+  --dry-run            Simulate migration and show planned adaptations
   -h, --help           Show this help message
 EOF
 }
@@ -33,10 +31,6 @@ while [ "$#" -gt 0 ]; do
             ;;
         --dry-run)
             DRY_RUN=1
-            shift
-            ;;
-        --force-rebuild)
-            FORCE_REBUILD=1
             shift
             ;;
         -h|--help)
@@ -61,12 +55,12 @@ if [ -z "$ARCHIVE_PATH" ]; then
 fi
 
 if [ -z "$ARCHIVE_PATH" ] || [ ! -f "$ARCHIVE_PATH" ]; then
-    log_error "No backup archive found in $SCRIPT_DIR/downloads. Please specify --archive <path>"
+    log_error "No backup archive found to migrate. Please specify --archive <path>"
     exit 1
 fi
 
-acquire_lock "restore" || exit 1
+acquire_lock "migration" || exit 1
 trap 'release_lock' EXIT
 
-restore_cybervps_backup "$ARCHIVE_PATH" "$DRY_RUN" "$FORCE_REBUILD"
+execute_vps_migration "$ARCHIVE_PATH" "$DRY_RUN"
 exit 0
