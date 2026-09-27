@@ -22,13 +22,17 @@
 - [x] Portable backup engine upgrade (`lib/backup.sh`, `backup-now.sh`) with format version 2, JSON metadata, integrity checks, and separate shared storage
 - [x] Safe restore engine upgrade (`lib/restore.sh`, `restore.sh`) with pre-restore snapshot, dry-run, path translation, and verification
 - [x] Cross-VPS migration engine (`lib/migration.sh`, `migrate.sh`) with source vs destination comparison and port conflict reallocation
-- [x] Automated test runner (`tests/run-tests.sh`) with unit tests: `test-config.sh`, `test-detect.sh`, `test-ports.sh`, `test-idempotency.sh`, `test-backup-layout.sh`, `test-migration-paths.sh`
+- [x] Rootless fresh install rebuild orchestration (`fresh-install.sh`)
+- [x] Comprehensive verification engine (`lib/verify.sh`, `verify.sh`) with `--json` output
+- [x] Remote backup synchronization (`lib/remote.sh`, `upload-backup.sh`, `download-backup.sh`) with rclone/local storage support and retention policy
+- [x] Interactive terminal menu (`cybervps.sh`) with ASCII fallback
+- [x] Automated test runner (`tests/run-tests.sh`) with 8 unit tests: `test-config.sh`, `test-detect.sh`, `test-ports.sh`, `test-idempotency.sh`, `test-backup-layout.sh`, `test-migration-paths.sh`, `test-menu.sh`, `test-secret-filter.sh`
 
 ---
 
 ## 2. In Progress
-- [ ] Rootless fresh install rebuild orchestration (`fresh-install.sh`)
-- [ ] Comprehensive verification engine (`lib/verify.sh`, `verify.sh`) with `--json` output
+- [ ] Non-destructive real backup and safe restore/migration simulations on reference host
+- [ ] Complete documentation suite (`ARCHITECTURE.md`, `BACKUP_FORMAT.md`, `RESTORE.md`, `MIGRATION.md`, `SECURITY.md`, `SERVICE_BACKENDS.md`, `TROUBLESHOOTING.md`)
 
 ---
 

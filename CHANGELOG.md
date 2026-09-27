@@ -18,7 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `lib/backup.sh`: Portable backup engine with format version 2, dynamic manifest capture, separate shared data archive handling, optional AES-256 encrypted secrets, integrity self-checks, and machine-readable `latest.json` generation.
   - `lib/restore.sh`: Safe restore engine with pre-restore safety snapshots, dry-run simulation, staging validation, selective path translation for managed configuration files, and automatic port conflict adaptation.
   - `lib/migration.sh`: Cross-host migration engine comparing source vs destination architecture, OS, libc, and user paths, rebuilding native environments when platform differences are detected.
+  - `lib/verify.sh`: Comprehensive health verification engine inspecting environment, runtimes, persistence, ports, cache, and resources with colored terminal report and `--json` support.
+  - `lib/remote.sh`: Remote storage abstraction supporting rclone, mounted filesystem paths, and HTTPS download sources, with upload validation and safe retention policies.
   - `migrate.sh`: CLI entry point for migrating backup archives across VPS instances.
+  - `fresh-install.sh`: Rootless rebuild from zero orchestrating directory setup, Micromamba/hosting environment, Cloudflared, ports, CLI helpers, and login recovery.
+  - `cybervps.sh`: Interactive terminal menu interface supporting 9 operations with Unicode frames and ASCII fallback.
 - Automated test framework under `tests/` with `run-tests.sh` runner and unit tests:
   - `tests/test-detect.sh`: Validates identity and architecture detection logic.
   - `tests/test-ports.sh`: Tests port scanning, free port discovery, and reservation idempotency.
@@ -26,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `tests/test-idempotency.sh`: Verifies idempotency of login recovery blocks, CLI helper creation, and process backend detection.
   - `tests/test-backup-layout.sh`: Tests snapshot creation, JSON metadata generation, SHA256SUMS integrity, and cache/socket exclusion rules.
   - `tests/test-migration-paths.sh`: Tests safe path translation on managed configuration files while preserving unrelated contents.
+  - `tests/test-menu.sh`: Validates non-interactive menu execution and options rendering.
+  - `tests/test-secret-filter.sh`: Validates detection of sensitive pattern leaks.
 - Security scanner:
   - `scripts/secret-check.sh`: Automated pre-commit/pre-push scanner checking for credentials, API tokens, private keys, and forbidden backup archives without leaking secret values.
 - Documentation tracking:

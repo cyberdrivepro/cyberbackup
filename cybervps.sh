@@ -1,133 +1,170 @@
 #!/usr/bin/env bash
-# cybervps.sh — CyberVPS Backup & Recovery main entry
-# Displays recovery menu and dispatches to restore.sh or fresh-install.sh
+# cybervps.sh — CyberVPS Master Interactive Terminal Interface
+# Provides a rootless menu for Backup, Restore, Migration, and Disaster Recovery.
 set -euo pipefail
 
-# Ensure PATH includes user bin and micromamba hosting env
+CYBERVPS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$CYBERVPS_DIR"
+
+# shellcheck source=lib/common.sh
+source "$CYBERVPS_DIR/lib/common.sh"
+# shellcheck source=lib/detect.sh
+source "$CYBERVPS_DIR/lib/detect.sh"
+# shellcheck source=lib/services.sh
+source "$CYBERVPS_DIR/lib/services.sh"
+
+# Ensure user PATH includes user-space locations
 export PATH="$HOME/bin:$HOME/apps/micromamba/envs/hosting/bin:$HOME/.cargo/bin:$HOME/go/bin:$HOME/apps/go/bin:$PATH"
-CYBERBACKUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$CYBERBACKUP_DIR"
 
-# Colors
-red='\033[0;31m'
-green='\033[0;32m'
-yellow='\033[1;33m'
-blue='\033[0;34m'
-bold='\033[1m'
-reset='\033[0m'
-
-# Helper
-info()    { echo -e "${info}${reset} $*"; }
-ok()      { echo -e "${green}✔${reset} $*"; }
-warn()    { echo -e "${yellow}⚠${reset} $*"; }
-err()     { echo -e "${red}✖${reset} $*"; }
-header()  { echo -e "\n${bold}$*${reset}\n"; }
-
-# Check for backups directory
-BACKUP_DIR="$HOME/cyberbackup/downloads"
-mkdir -p "$BACKUP_DIR"
-
-# Detect latest backup archive if present
-detect_backup() {
-    local latest="$BACKUP_DIR/latest.json"
-    if [ -f "$latest" ]; then
-        return 0
-    fi
-    # Also accept commonly named archives
-    for c in "$BACKUP_DIR"/cybervps-backup-*.tar.zst "$BACKUP_DIR"/cybervps-backup-*.tar.gz; do
-        if [ -f "$c" ]; then
-            return 0
-        fi
-    done
-    return 1
-}
-
-# Show main menu
-show_menu() {
-    clear
-    cat <<'EOF'
-╔══════════════════════════════════════╗
-║         CYBER VPS RECOVERY           ║
-╚══════════════════════════════════════╝
-
-Host: $(hostname)
-User: $(whoami)
-
-[1] Restore from CyberBackup
-[2] Fresh Install / Rebuild
-[0] Exit
-
-Selection:
-EOF
-}
-
-# Read selection
-read_selection() {
-    local choice
-    read -rp "Selection: " choice
-    echo
-    case "$choice" in
-        1)
-            "$CYBERBACKUP_DIR/restore.sh"
-            ;;
-        2)
-            "$CYBERBACKUP_DIR/fresh-install.sh"
-            ;;
-        0)
-            echo "Exiting."
-            exit 0
-            ;;
-        *)
-            err "Invalid selection: $choice"
-            sleep 1
-            show_menu
-            read_selection
-            ;;
+# Test Unicode support
+has_unicode() {
+    case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+        *UTF-8*|*utf8*) return 0 ;;
+        *) return 1 ;;
     esac
 }
 
-# Ensure micromamba is available for restore/fresh paths
-ensure_micromamba() {
-    if command -v micromamba >/dev/null 2>&1; then
-        ok "micromamba available"
-        return 0
-    fi
-    warn "micromamba not in PATH"
-    if [ -x "$HOME/bin/micromamba" ]; then
-        export PATH="$HOME/bin:$PATH"
-        ok "micromamba found at $HOME/bin/micromamba"
-        return 0
-    fi
-    err "micromamba missing. Option 2 will attempt to download it."
-    return 1
-}
-
-# Pre-flight
-main() {
-    header "CYBER VPS RECOVERY SYSTEM"
-    echo "Host: $(hostname)"
-    echo "User: $(whoami)"
-    echo
-
-    # Check for local backup
-    if detect_backup; then
-        ok "Local backup detected in $BACKUP_DIR"
+show_header() {
+    clear 2>/dev/null || echo
+    if has_unicode; then
+        cat << 'EOF'
+╔══════════════════════════════════════════════════════╗
+║                       CyberVPS                       ║
+║        Portable Non-Root Linux Recovery Toolkit      ║
+╚══════════════════════════════════════════════════════╝
+EOF
     else
-        warn "No local backup detected in $BACKUP_DIR"
-        if [ -f "$CYBERBACKUP_DIR/remote.conf" ]; then
-            if [ -n "${CYBERBACKUP_REMOTE:-}" ]; then
-                ok "Remote backup configured: $CYBERBACKUP_REMOTE"
-            else
-                warn "No remote backup configured yet"
-            fi
-        else
-            warn "No remote.conf found; copy remote.example.conf to remote.conf"
-        fi
+        cat << 'EOF'
++------------------------------------------------------+
+|                       CyberVPS                       |
+|        Portable Non-Root Linux Recovery Toolkit      |
++------------------------------------------------------+
+EOF
     fi
 
-    echo
-    show_menu
-    read_selection
+    detect_environment
+    echo "Detected Profile:"
+    echo "  Host: $CYBER_HOSTNAME | User: $CYBER_USER | Arch: $CYBER_ARCH"
+    echo "  Home: $CYBER_HOME"
+    echo "  OS:   $CYBER_DISTRO_PRETTY ($CYBER_LIBC $CYBER_LIBC_VERSION)"
+    echo "--------------------------------------------------------"
 }
 
-main "$@"
+show_menu() {
+    show_header
+    cat << 'EOF'
+  [1] Restore Backup to This VPS
+  [2] Fresh Install / Rebuild
+  [3] Migrate Backup From Another VPS
+  [4] Create Backup
+  [5] Upload Backup
+  [6] Download Backup
+  [7] Verify Current VPS
+  [8] CyberVPS Status
+  [9] Configuration
+  [0] Exit
+--------------------------------------------------------
+EOF
+}
+
+handle_config_menu() {
+    show_header
+    echo "=== CyberVPS Configuration ==="
+    echo "Config file: $CYBERVPS_CONFIG_FILE"
+    echo "Ports file:  $PORTS_CONFIG_FILE"
+    echo
+    if [ -f "$CYBERVPS_CONFIG_FILE" ]; then
+        echo "--- Current config.env ---"
+        cat "$CYBERVPS_CONFIG_FILE"
+    else
+        echo "No config.env file found. Defaults are active."
+    fi
+    echo
+    if [ -f "$PORTS_CONFIG_FILE" ]; then
+        echo "--- Current ports.env ---"
+        cat "$PORTS_CONFIG_FILE"
+    fi
+    echo
+    read -rp "Press Enter to return to main menu..." _
+}
+
+handle_status_menu() {
+    show_header
+    echo "=== CyberVPS Status & Services ==="
+    echo "Application Version: $CYBERVPS_VERSION"
+    echo "Backup Format:       $CYBERVPS_BACKUP_FORMAT"
+    echo "Process Backend:     $(get_process_backend)"
+    echo
+    echo "Local Backups:"
+    local found=0
+    for b in "$CYBERVPS_DIR/downloads"/cybervps-backup-*.tar.*; do
+        if [ -f "$b" ]; then
+            echo "  - $(basename "$b") ($(du -h "$b" | awk '{print $1}'))"
+            found=1
+        fi
+    done
+    [ "$found" -eq 0 ] && echo "  (None found in downloads/)"
+    echo
+    read -rp "Press Enter to return to main menu..." _
+}
+
+main_loop() {
+    while true; do
+        show_menu
+        local choice
+        read -rp "Selection [0-9]: " choice
+        echo
+        case "$choice" in
+            1)
+                "$CYBERVPS_DIR/restore.sh"
+                read -rp "Press Enter to continue..." _
+                ;;
+            2)
+                "$CYBERVPS_DIR/fresh-install.sh"
+                read -rp "Press Enter to continue..." _
+                ;;
+            3)
+                "$CYBERVPS_DIR/migrate.sh"
+                read -rp "Press Enter to continue..." _
+                ;;
+            4)
+                "$CYBERVPS_DIR/backup-now.sh"
+                read -rp "Press Enter to continue..." _
+                ;;
+            5)
+                "$CYBERVPS_DIR/upload-backup.sh"
+                read -rp "Press Enter to continue..." _
+                ;;
+            6)
+                "$CYBERVPS_DIR/download-backup.sh"
+                read -rp "Press Enter to continue..." _
+                ;;
+            7)
+                "$CYBERVPS_DIR/verify.sh"
+                read -rp "Press Enter to continue..." _
+                ;;
+            8)
+                handle_status_menu
+                ;;
+            9)
+                handle_config_menu
+                ;;
+            0)
+                echo "Exiting CyberVPS. Goodbye!"
+                exit 0
+                ;;
+            *)
+                echo "Invalid selection: $choice"
+                sleep 1
+                ;;
+        esac
+    done
+}
+
+if [ "${1:-}" = "--menu" ] || [ -t 0 ]; then
+    main_loop
+else
+    show_menu
+    echo "Non-interactive session. Use CLI scripts directly:"
+    echo "  ./backup-now.sh, ./restore.sh, ./fresh-install.sh, ./verify.sh"
+fi
