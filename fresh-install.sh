@@ -18,6 +18,7 @@ source "$SCRIPT_DIR/lib/services.sh"
 source "$SCRIPT_DIR/lib/verify.sh"
 
 DRY_RUN=0
+PROFILE="hosting"
 
 show_usage() {
     cat << EOF
@@ -25,13 +26,18 @@ CyberVPS Fresh Rebuild CLI
 Usage: $(basename "$0") [options]
 
 Options:
-  --dry-run    Simulate installation without making system changes
-  -h, --help   Show this help message
+  --profile <name>  Installation profile: minimal, hosting (default), developer, full
+  --dry-run         Simulate installation without making system changes
+  -h, --help        Show this help message
 EOF
 }
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
+        --profile)
+            PROFILE="${2:-hosting}"
+            shift 2
+            ;;
         --dry-run)
             DRY_RUN=1
             shift
@@ -75,16 +81,10 @@ for dir in bin apps config services logs projects examples shared run backups do
 done
 log_ok "Directory structure established"
 
-# 2. Install Micromamba
-install_micromamba || log_warn "Micromamba installation failed or skipped"
+# 2. Deploy selected profile components
+install_profile "$PROFILE"
 
-# 3. Create hosting environment
-setup_hosting_env || log_warn "Hosting environment creation failed or skipped"
-
-# 4. Install Cloudflared
-install_cloudflared || log_warn "Cloudflared installation skipped"
-
-# 5. Dynamic Port Allocations (Phase 8)
+# 3. Dynamic Port Allocations (Phase 8)
 log_header "Configuring Default Service Ports"
 WEB_P="$(reserve_or_select_port "WEB_PORT" 8080)"
 PROXY_P="$(reserve_or_select_port "WEB_PROXY_PORT" 8081)"

@@ -18,6 +18,10 @@ source "$LIB_DIR/ports.sh"
 source "$LIB_DIR/services.sh"
 # shellcheck source=lib/install.sh
 source "$LIB_DIR/install.sh"
+# shellcheck source=lib/archive.sh
+source "$LIB_DIR/archive.sh"
+# shellcheck source=lib/architecture.sh
+source "$LIB_DIR/architecture.sh"
 
 CYBERVPS_BACKUP_FORMAT=2
 
@@ -119,16 +123,15 @@ restore_cybervps_backup() {
 
     local staging_dir="${HOME}/cyberbackup/payload/staging-$$"
     ensure_directory "$staging_dir" 0700
-    trap 'rm -rf "$staging_dir"' EXIT
 
     log_header "Extracting Archive to Staging"
     log_info "Staging directory: $staging_dir"
 
-    if [[ "$archive_path" == *.tar.zst ]]; then
-        tar -I zstd -xf "$archive_path" -C "$staging_dir" 2>/dev/null || tar -I zstd -xf "$archive_path" -C "$staging_dir"
-    else
-        tar -xzf "$archive_path" -C "$staging_dir" 2>/dev/null || tar -xzf "$archive_path" -C "$staging_dir"
-    fi
+    extract_archive_safe "$archive_path" "$staging_dir" || {
+        log_error "Extraction of backup archive failed or was blocked by security validator."
+        rm -rf "$staging_dir"
+        return 1
+    }
 
     # Locate extracted system metadata
     local meta_json
@@ -136,12 +139,16 @@ restore_cybervps_backup() {
     local src_user="unknown"
     local src_home=""
     local src_arch=""
+    local src_libc="glibc"
+    local src_libc_ver=""
     local src_format="1"
 
     if [ -n "$meta_json" ] && [ -f "$meta_json" ]; then
         src_user="$(grep -E '"source_user":' "$meta_json" | cut -d'"' -f4 || echo "unknown")"
         src_home="$(grep -E '"source_home":' "$meta_json" | cut -d'"' -f4 || true)"
         src_arch="$(grep -E '"architecture":' "$meta_json" | cut -d'"' -f4 || true)"
+        src_libc="$(grep -E '"libc":' "$meta_json" | cut -d'"' -f4 || echo "glibc")"
+        src_libc_ver="$(grep -E '"libc_version":' "$meta_json" | cut -d'"' -f4 || echo "")"
         src_format="$(grep -E '"format_version":' "$meta_json" | grep -oE '[0-9]+' || echo "1")"
     fi
 
@@ -149,19 +156,22 @@ restore_cybervps_backup() {
     log_info "Source User: $src_user"
     log_info "Source Home: ${src_home:-unknown}"
     log_info "Source Arch: ${src_arch:-unknown}"
+    log_info "Source Libc: $src_libc ${src_libc_ver}"
     log_info "Source Backup Format: $src_format"
     log_info "Current Host Arch: $CYBER_ARCH"
+    log_info "Current Host Libc: $CYBER_LIBC ${CYBER_LIBC_VERSION}"
     log_info "Current User: $CYBER_USER"
     log_info "Current Home: $CYBER_HOME"
 
     if [ "$src_format" -gt "$CYBERVPS_BACKUP_FORMAT" ]; then
         log_error "Backup format version $src_format is newer than supported version $CYBERVPS_BACKUP_FORMAT. Update CyberVPS first."
+        rm -rf "$staging_dir"
         return 1
     fi
 
     local arch_mismatch=0
-    if [ -n "$src_arch" ] && [ "$src_arch" != "$CYBER_ARCH" ]; then
-        log_warn "Architecture mismatch detected: Source ($src_arch) != Destination ($CYBER_ARCH)"
+    if ! check_binary_compatibility "${src_arch:-$CYBER_ARCH}" "$CYBER_ARCH" "${src_libc:-glibc}" "${src_libc_ver:-}" "$CYBER_LIBC" "$CYBER_LIBC_VERSION"; then
+        log_warn "Target system is not binary compatible with source snapshot; runtime rebuild will be enforced."
         arch_mismatch=1
     fi
 
@@ -175,6 +185,7 @@ restore_cybervps_backup() {
         log_info "4. Would translate managed configuration paths (${src_home:-/home/user} -> $CYBER_HOME)"
         log_info "5. Would verify and reallocate ports if conflicting"
         log_info "6. Would install CyberVPS CLI helpers and login recovery"
+        rm -rf "$staging_dir"
         return 0
     fi
 
@@ -190,6 +201,8 @@ restore_cybervps_backup() {
         extracted_root="$staging_dir/$src_home"
     elif [ -d "$staging_dir/home/$src_user" ]; then
         extracted_root="$staging_dir/home/$src_user"
+    elif [ -d "$staging_dir/home" ] && [ ! -d "$staging_dir/config" ]; then
+        extracted_root="$staging_dir/home"
     fi
 
     log_header "Restoring Portable Configuration and Services"
@@ -280,5 +293,6 @@ restore_cybervps_backup() {
     log_header "RESTORE COMPLETED SUCCESSFULLY"
     log_ok "Configuration, projects, and services restored."
     log_info "To verify the restored environment, run: ./verify.sh"
+    rm -rf "$staging_dir"
     return 0
 }

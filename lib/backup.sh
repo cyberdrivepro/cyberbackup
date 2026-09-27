@@ -13,6 +13,8 @@ source "$LIB_DIR/common.sh"
 source "$LIB_DIR/detect.sh"
 # shellcheck source=lib/ports.sh
 source "$LIB_DIR/ports.sh"
+# shellcheck source=lib/archive.sh
+source "$LIB_DIR/archive.sh"
 
 CYBERVPS_BACKUP_FORMAT=2
 
@@ -155,31 +157,31 @@ create_cybervps_backup() {
     log_info "Destination: $dest_dir"
 
     # Staging manifest directory
-    local staging_manifests="${dest_dir}/manifests-${date_stamp}"
+    local staging_root="${dest_dir}/staging-${date_stamp}"
+    local staging_manifests="${staging_root}/manifests"
     generate_runtime_manifests "$staging_manifests"
 
-    # Build inclusion file list
+    # Build inclusion file list (relative to $HOME)
     local file_list="${dest_dir}/filelist-${date_stamp}.txt"
     > "$file_list"
 
-    # Core portable configuration and metadata paths
-    local include_paths=(
-        "${HOME}/bin"
-        "${HOME}/config"
-        "${HOME}/services"
-        "${HOME}/projects"
-        "${HOME}/examples"
-        "${HOME}/.pm2/dump.pm2"
-        "${HOME}/.bashrc"
-        "${HOME}/.profile"
-        "${HOME}/.bash_aliases"
-        "${HOME}/.bash_logout"
-        "${HOME}/.config/cybervps"
-        "$staging_manifests"
+    # Core portable configuration and metadata paths (relative to $HOME)
+    local include_rel_paths=(
+        "bin"
+        "config"
+        "services"
+        "projects"
+        "examples"
+        ".pm2/dump.pm2"
+        ".bashrc"
+        ".profile"
+        ".bash_aliases"
+        ".bash_logout"
+        ".config/cybervps"
     )
 
-    for p in "${include_paths[@]}"; do
-        if [ -e "$p" ]; then
+    for p in "${include_rel_paths[@]}"; do
+        if [ -e "${HOME}/$p" ]; then
             echo "$p" >> "$file_list"
         fi
     done
@@ -244,27 +246,27 @@ EXCLUDES
 
     if [ "$opt_dry_run" -eq 1 ]; then
         log_warn "DRY-RUN MODE: Simulating backup creation"
-        log_info "Included base directories:"
-        cat "$file_list" | sed "s|^$HOME|~/|"
-        rm -rf "$staging_manifests" "$file_list" "$exclude_file"
+        log_info "Included relative base directories:"
+        cat "$file_list"
+        rm -rf "$staging_root" "$file_list" "$exclude_file"
         return 0
     fi
 
-    log_info "Compressing archive ($archive_ext)..."
+    log_info "Compressing relative archive ($archive_ext)..."
     if have_command zstd; then
-        tar --exclude-from="$exclude_file" --files-from="$file_list" --absolute-names -I 'zstd -3 -T0' -cf "$archive_path"
+        tar --exclude-from="$exclude_file" -C "$staging_root" manifests -C "$HOME" --files-from="$file_list" -I 'zstd -3 -T0' -cf "$archive_path"
     else
-        tar --exclude-from="$exclude_file" --files-from="$file_list" --absolute-names -czf "$archive_path"
+        tar --exclude-from="$exclude_file" -C "$staging_root" manifests -C "$HOME" --files-from="$file_list" -czf "$archive_path"
     fi
 
-    # Verify archive integrity immediately
-    log_info "Verifying archive integrity..."
-    if have_command zstd && [[ "$archive_path" == *.tar.zst ]]; then
-        tar -I zstd -tf "$archive_path" >/dev/null || { log_error "Archive corrupted"; return 1; }
-    else
-        tar -tzf "$archive_path" >/dev/null || { log_error "Archive corrupted"; return 1; }
+    # Verify archive integrity and security scan immediately
+    log_info "Verifying archive integrity and security profile..."
+    if ! validate_archive_security "$archive_path"; then
+        log_error "Backup archive failed security validation"
+        rm -rf "$staging_root" "$file_list" "$exclude_file"
+        return 1
     fi
-    log_ok "Archive integrity verified"
+    log_ok "Archive integrity and security verified"
 
     # Compute SHA256
     local sha256
@@ -341,7 +343,7 @@ EOF
     fi
 
     # Clean temporary files
-    rm -rf "$staging_manifests" "$file_list" "$exclude_file"
+    rm -rf "$staging_root" "$file_list" "$exclude_file"
 
     log_header "Backup Summary"
     log_ok "Archive created: $archive_path"

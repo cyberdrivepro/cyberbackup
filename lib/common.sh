@@ -100,58 +100,10 @@ download_file() {
     return 0
 }
 
-# Safe user-space locking
-# Uses flock if available, otherwise atomic mkdir fallback
-CYBERVPS_LOCK_FD=200
-_CYBERVPS_LOCK_DIR=""
-
-acquire_lock() {
-    local lock_name="${1:-cybervps}"
-    local lock_dir="${HOME}/.config/cybervps/locks"
-    ensure_directory "$lock_dir" 0700
-
-    local lock_file="$lock_dir/${lock_name}.lock"
-
-    if have_command flock; then
-        exec 200>"$lock_file"
-        if ! flock -n 200; then
-            log_error "Another CyberVPS process is currently running ($lock_file locked)."
-            return 1
-        fi
-        log_debug "Acquired lock via flock: $lock_file"
-        return 0
-    else
-        # Directory-based atomic lock fallback
-        _CYBERVPS_LOCK_DIR="$lock_dir/${lock_name}.dir.lock"
-        if ! mkdir "$_CYBERVPS_LOCK_DIR" 2>/dev/null; then
-            # Check for stale lock older than 2 hours
-            local lock_age
-            lock_age=$(find "$_CYBERVPS_LOCK_DIR" -maxdepth 0 -mmin +120 2>/dev/null || true)
-            if [ -n "$lock_age" ]; then
-                log_warn "Cleaning stale lock directory: $_CYBERVPS_LOCK_DIR"
-                rm -rf "$_CYBERVPS_LOCK_DIR"
-                mkdir "$_CYBERVPS_LOCK_DIR" || return 1
-            else
-                log_error "Another CyberVPS process is currently running (lock dir exists: $_CYBERVPS_LOCK_DIR)."
-                return 1
-            fi
-        fi
-        log_debug "Acquired directory lock: $_CYBERVPS_LOCK_DIR"
-        return 0
-    fi
-}
-
-release_lock() {
-    if have_command flock; then
-        flock -u 200 2>/dev/null || true
-        exec 200>&- 2>/dev/null || true
-    fi
-    if [ -n "$_CYBERVPS_LOCK_DIR" ] && [ -d "$_CYBERVPS_LOCK_DIR" ]; then
-        rm -rf "$_CYBERVPS_LOCK_DIR" 2>/dev/null || true
-        _CYBERVPS_LOCK_DIR=""
-    fi
-    log_debug "Released CyberVPS lock."
-}
+# shellcheck source=lib/lock.sh
+source "$LIB_DIR/lock.sh"
+# shellcheck source=lib/architecture.sh
+source "$LIB_DIR/architecture.sh"
 
 # Constrained KEY=VALUE parser (does not eval untrusted shell code)
 parse_env_file() {

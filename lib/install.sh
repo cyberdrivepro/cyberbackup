@@ -224,3 +224,50 @@ install_node_global_tool() {
     log_warn "npm not available; cannot install '$tool'"
     return 1
 }
+
+# Install curated stack profiles
+install_profile() {
+    local profile="${1:-hosting}"
+    local inst_dir="$CYBERVPS_ROOT/installers"
+
+    ensure_user_paths
+    ensure_cybervps_profile
+
+    case "$profile" in
+        minimal)
+            log_header "Installing Profile: Minimal"
+            init_ports_config
+            ;;
+        hosting)
+            log_header "Installing Profile: Hosting"
+            [ -f "$inst_dir/node.sh" ] && bash "$inst_dir/node.sh"
+            [ -f "$inst_dir/redis.sh" ] && bash "$inst_dir/redis.sh"
+            [ -f "$inst_dir/nginx.sh" ] && bash "$inst_dir/nginx.sh"
+            [ -f "$inst_dir/cloudflared.sh" ] && bash "$inst_dir/cloudflared.sh"
+            ;;
+        developer)
+            log_header "Installing Profile: Developer"
+            [ -f "$inst_dir/micromamba.sh" ] && bash "$inst_dir/micromamba.sh"
+            [ -f "$inst_dir/python.sh" ] && bash "$inst_dir/python.sh"
+            [ -f "$inst_dir/node.sh" ] && bash "$inst_dir/node.sh"
+            [ -f "$inst_dir/go.sh" ] && bash "$inst_dir/go.sh"
+            [ -f "$inst_dir/rust.sh" ] && bash "$inst_dir/rust.sh"
+            ;;
+        full)
+            log_header "Installing Profile: Full Stack"
+            [ -f "$inst_dir/micromamba.sh" ] && bash "$inst_dir/micromamba.sh"
+            [ -f "$inst_dir/python.sh" ] && bash "$inst_dir/python.sh"
+            [ -f "$inst_dir/node.sh" ] && bash "$inst_dir/node.sh"
+            [ -f "$inst_dir/redis.sh" ] && bash "$inst_dir/redis.sh"
+            [ -f "$inst_dir/nginx.sh" ] && bash "$inst_dir/nginx.sh"
+            [ -f "$inst_dir/cloudflared.sh" ] && bash "$inst_dir/cloudflared.sh"
+            [ -f "$inst_dir/go.sh" ] && bash "$inst_dir/go.sh"
+            [ -f "$inst_dir/rust.sh" ] && bash "$inst_dir/rust.sh"
+            ;;
+        *)
+            log_error "Unknown profile: $profile (valid: minimal, hosting, developer, full)"
+            return 1
+            ;;
+    esac
+    log_ok "Profile '$profile' installation completed."
+}

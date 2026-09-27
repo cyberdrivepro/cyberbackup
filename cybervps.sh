@@ -62,6 +62,7 @@ show_menu() {
   [7] Verify Current VPS
   [8] CyberVPS Status
   [9] Configuration
+  [10] Diagnostics & System Inspector
   [0] Exit
 --------------------------------------------------------
 EOF
@@ -108,11 +109,57 @@ handle_status_menu() {
     read -rp "Press Enter to return to main menu..." _
 }
 
+handle_diagnostics_menu() {
+    show_header
+    echo "=== CyberVPS Diagnostics & System Inspector ==="
+    echo "Host Profile:"
+    echo "  Architecture:  $CYBER_ARCH ($CYBER_RAW_ARCH)"
+    echo "  Kernel:        $CYBER_KERNEL"
+    echo "  Distribution:  $CYBER_DISTRO_PRETTY"
+    echo "  C Library:     $CYBER_LIBC $CYBER_LIBC_VERSION"
+    echo "  User / UID:    $CYBER_USER / $CYBER_UID"
+    echo
+    echo "Service Backend Candidates:"
+    local sysd_ok="No" tmux_ok="No" screen_ok="No"
+    if have_command systemctl && systemctl --user list-units >/dev/null 2>&1; then
+        sysd_ok="Yes (active)"
+    fi
+    have_command tmux && tmux_ok="Yes"
+    have_command screen && screen_ok="Yes"
+    echo "  - systemd --user: $sysd_ok"
+    echo "  - tmux:           $tmux_ok"
+    echo "  - screen:         $screen_ok"
+    echo "  - nohup:          Yes (fallback)"
+    echo "  Selected Default: $(get_process_backend)"
+    echo
+    echo "Port Allocations & Active Bindings:"
+    if [ -f "$PORTS_CONFIG_FILE" ]; then
+        while IFS='=' read -r k v || [ -n "$k" ]; do
+            [[ -z "$k" || "$k" =~ ^# ]] && continue
+            local listening="inactive"
+            is_port_free "$v" || listening="LISTENING"
+            printf "  %-18s = %-6s [%s]\n" "$k" "$v" "$listening"
+        done < "$PORTS_CONFIG_FILE"
+    else
+        echo "  (No ports.env initialized yet)"
+    fi
+    echo
+    echo "Recent CyberVPS Activity Logs:"
+    local log_f="${HOME}/.local/state/cybervps/logs/cybervps.log"
+    if [ -f "$log_f" ]; then
+        tail -n 12 "$log_f" | sed 's/^/  /'
+    else
+        echo "  (No log entries recorded)"
+    fi
+    echo
+    read -rp "Press Enter to return to main menu..." _
+}
+
 main_loop() {
     while true; do
         show_menu
         local choice
-        read -rp "Selection [0-9]: " choice
+        read -rp "Selection [0-10]: " choice
         echo
         case "$choice" in
             1)
@@ -148,6 +195,9 @@ main_loop() {
                 ;;
             9)
                 handle_config_menu
+                ;;
+            10)
+                handle_diagnostics_menu
                 ;;
             0)
                 echo "Exiting CyberVPS. Goodbye!"
