@@ -1,0 +1,10 @@
+# Services manifest (user-space)
+# Each line: name|binary|config|port|status-check|start-cmd|stop-cmd
+redis|redis-server|$HOME/config/redis.conf|6380|$HOME/apps/redis/bin/redis-cli -h 127.0.0.1 -p 6380 ping|$HOME/services/start-redis.sh|$HOME/services/stop-redis.sh
+nginx|nginx|$HOME/config/nginx/nginx.conf|8080|curl -fs -m 2 http://127.0.0.1:8080/health|$HOME/services/start-nginx.sh|$HOME/services/stop-nginx.sh
+supervisor|svcd-h24|$HOME/config/svcd-h24.conf|none|$HOME/bin/h24ctl -c $HOME/config/svcd-h24.conf status|$HOME/services/start-supervisor.sh|$HOME/services/stop-supervisor.sh
+pm2|pm2|$HOME/.pm2|none|pm2 ping|$HOME/services/start-pm2.sh|$HOME/services/stop-pm2.sh
+tmux|hosting24||none|tmux has-session -t hosting24|$HOME/bin/hosting-start|$HOME/bin/hosting-stop
+scheduler|scheduler||none|$HOME/bin/scheduler status|$HOME/bin/scheduler|$HOME/bin/scheduler stop
+healthcheck|healthcheck||none|$HOME/services/healthcheck.sh|$HOME/services/healthcheck.sh|n/a
+cloudflared|cloudflared||none|$HOME/bin/cloudflared --version|$HOME/bin/cloudflared|n/a

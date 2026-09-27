@@ -1,0 +1,9 @@
+# Ports manifest (user-space services)
+# Listening ports owned by this user.
+redis-user=6380
+nginx-static=8080
+nginx-proxy=8081
+# Optional services (if configured)
+# api=8000
+# pm2-default=3000
+# grpc=5005

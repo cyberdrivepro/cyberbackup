@@ -1,0 +1,46 @@
+# CyberVPS files manifest (backup-now.sh source list)
+#
+# This file is the authoritative list of user-owned files/directories
+# included in the CyberVPS backup (excluding secrets and disposable caches).
+#
+# Format: one entry per line.
+# Paths are relative to $HOME unless prefixed with ABSOLUTE: or RECURSIVE:.
+# Entries are matched during backup with rsync --files-from and verified with sha256sum.
+#
+# Include user-space command helpers
+$HOME/bin
+# Include user-space apps (binaries, libs, data)
+$HOME/apps
+# Include user-space config tree
+$HOME/config
+# Include user-space services
+$HOME/services
+# Include projects
+$HOME/projects
+# Include examples
+$HOME/examples
+# Include run configuration
+$HOME/run
+# Include PM2 dump
+$HOME/.pm2/dump.pm2
+# Include Rust toolchain manifests
+$HOME/.rustup
+$HOME/.cargo/config.toml
+$HOME/.cargo/registry/index
+$HOME/.cargo/registry/cache
+$HOME/.cargo/bin
+$HOME/.cargo/log
+# Include Go installation
+$HOME/apps/go
+$HOME/go
+# Include micromamba environment manifest (conda-meta)
+$HOME/apps/micromamba/envs/hosting/conda-meta
+# Include shell config
+$HOME/.bashrc
+$HOME/.profile
+$HOME/.bash_aliases
+$HOME/.bash_logout
+# Secrets are handled separately via optional encrypted backup
+# (never include .env, tokens, SSH private keys, rclone credentials, Cloudflare secrets)
+# Note: socket and pid files are excluded by backup script; do not list them here.
+# Also ensure no pid/sock/lock files are included in the manifest.

@@ -1,0 +1,8 @@
+# Node.js version manifest
+# Values extracted from current environment.
+node-version=22
+npm-version=10.9.8
+pnpm-version=12.6.0
+yarn-version=1.22.22
+pm2-version=7.0.4
+corepack-version=0.34.6

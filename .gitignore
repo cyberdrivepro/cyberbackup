@@ -1,0 +1,64 @@
+# ============================================================
+# CyberVPS .gitignore
+# Strictly exclude secrets, backups, logs, and transient files
+# ============================================================
+
+# Backup archives
+*.tar
+*.tar.gz
+*.tar.zst
+*.tgz
+*.zip
+latest.json
+SHA256SUMS
+
+# Runtime & Transient Dirs
+downloads/*
+!downloads/README.md
+payload/*
+!payload/README.md
+logs/*
+!logs/README.md
+
+# Process & Socket files
+*.pid
+*.sock
+*.lock
+
+# Secrets & Credentials
+*.key
+*.pem
+*.enc
+.env
+.env.*
+!*.env.example
+remote.conf
+rclone.conf
+credentials*
+secrets*
+id_rsa*
+id_ed25519*
+*token*
+*.cert
+
+# Temporary and caches
+tmp/
+temp/
+.cache/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.tsbuildinfo
+.pnpm-store/
+node_modules/
+*.pyc
+__pycache__/
+*.egg-info/
+dist/
+build/
+target/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+

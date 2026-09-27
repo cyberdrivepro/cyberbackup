@@ -1,0 +1,97 @@
+# CyberVPS system manifest
+# Generated: $(date --iso-8601=seconds 2>/dev/null || date)
+HOSTNAME=$(hostname)
+USER=$(id -un)
+UID=$(id -u)
+GID=$(id -g)
+SHELL=$(readlink -f /usr/bin/bash 2>/dev/null || command -v bash)
+HOME=/home/srhfqtos
+ARCH=$(uname -m)
+KERNEL=$(uname -s)
+CYBERVPS_BACKUP_FORMAT=1
+
+# Python / pip (hosting env)
+PYTHON=$(python --version 2>&1 | cut -d' ' -f2)
+PIP=$(python -m pip --version 2>/dev/null | cut -d' ' -f2)
+
+# Node
+NODE=$(node --version 2>/dev/null | cut -d'v' -f2)
+NPM=$(npm --version 2>/dev/null)
+PNPM=$(pnpm --version 2>/dev/null)
+YARN=$(yarn --version 2>/dev/null)
+PM2=$(pm2 --version 2>/dev/null | tail -1 | tr -d 'v')
+NVM_HOME=$HOME/.nvm
+NPM_GLOBAL_PREFIX=$HOME/.npm-global
+
+# Rust
+RUSTC=$(rustc --version 2>/dev/null)
+CARGO=$(cargo --version 2>/dev/null)
+RUSTUP_HOME=$HOME/.rustup
+CARGO_HOME=$HOME/.cargo
+
+# Go
+GOROOT=$HOME/apps/go
+GOBIN=$HOME/go/bin
+
+# Git
+GIT=$(git --version 2>/dev/null)
+
+# Conda / micromamba
+MAMBA=$HOME/bin/micromamba
+MAMBA_ROOT=$HOME/apps/micromamba
+CONDA_ENV=hosting
+CONDA_PREFIX=$HOME/apps/micromamba/envs/hosting
+
+# DB
+SQLITE=$(sqlite3 --version 2>/dev/null | cut -d' ' -f1-2)
+
+# Web infra
+NGINX_PREFIX=$HOME/apps/nginx
+NGINX_BIN=$HOME/apps/micromamba/envs/hosting/bin/nginx
+NGINX_PREFIX_BIN=$HOME/apps/micromamba/envs/hosting/sbin/nginx
+REDIS_USER_BIN=$HOME/apps/redis/bin/rsrvd-h24
+REDIS_USER_CLI=$HOME/apps/redis/bin/redis-cli
+REDIS_PORT=6380
+REDIS_HOST=127.0.0.1
+NGINX_PORT=8080
+NGINX_PROXY_PORT=8081
+
+# Process management
+SUPERVISOR_BIN=$HOME/bin/svcd-h24
+SUPERVISOR_CTL=$HOME/bin/h24ctl
+SUPERVISOR_CONF=$HOME/config/svcd-h24.conf
+PM2_HOME=$HOME/.pm2
+TMUX_SESSION=hosting24
+
+# Paths
+BIN=$HOME/bin
+APPS=$HOME/apps
+CONFIG=$HOME/config
+SERVICES=$HOME/services
+LOGS=$HOME/logs
+PROJECTS=$HOME/projects
+EXAMPLES=$HOME/examples
+SHARED=$HOME/shared
+RUN=$HOME/run
+BACKUPS=$HOME/backups
+DOWNLOADS=$HOME/downloads
+TMP=$HOME/tmp
+
+# Cloudflare
+CLOUDFLARED=$HOME/bin/cloudflared
+
+# Package managers present in environment
+HAS_MICROMAMBA=yes
+HAS_PIP=yes
+HAS_NPM=yes
+HAS_PNPM=yes
+HAS_YARN=yes
+HAS_CARGO=yes
+HAS_GO=yes
+HAS_RCLONE=yes
+HAS_RSYNC=yes
+HAS_ARIA2=yes
+HAS_CURL=yes
+HAS_WGET=yes
+HAS_JQ=yes
+

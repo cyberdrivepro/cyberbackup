@@ -1,0 +1,72 @@
+# micromamba environment manifest for hosting (hosting24)
+# Generated from current environment (conda-meta)
+# Source: $HOME/apps/micromamba/envs/hosting
+# Usage: micromamba create -f manifest/micromamba-env.yml -p $HOME/apps/micromamba/envs/hosting
+
+name: hosting
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - nodejs=22
+  - npm
+  - pnpm
+  - yarn
+  - pm2
+  - git
+  - cmake
+  - make
+  - ninja
+  - pkg-config
+  - sqlite
+  - curl
+  - wget
+  - jq
+  - ffmpeg
+  - cloudflared
+  - rust
+  - cargo
+  - rustup
+  - zip
+  - unzip
+  - tar
+  - gzip
+  - pigz
+  - zstd
+  - rsync
+  - aria2
+  - nghttp2
+  - libffi
+  - openssl
+  - ca-certificates
+  - certifi
+  - python-dotenv
+  - virtualenv
+  - pip
+  - wheel
+  - setuptools
+  - supervisor
+  - fastapi
+  - uvicorn
+  - gunicorn
+  - flask
+  - django
+  - aiohttp
+  - httpx
+  - requests
+  - websockets
+  - redis
+  - sqlalchemy
+  - alembic
+  - pydantic
+  - psutil
+  - rich
+  - aiofiles
+  - python-multipart
+  - apscheduler
+  - pytest
+  - httpx
+  - black
+  - ruff
+  - mypy

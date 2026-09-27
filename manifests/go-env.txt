@@ -1,0 +1,7 @@
+# Go environment manifest
+GOROOT=/home/srhfqtos/apps/go
+GOBIN=/home/srhfqtos/go/bin
+GOPATH=/home/srhfqtos/go
+PATH additions:
+  $HOME/apps/go/bin
+  $HOME/go/bin
