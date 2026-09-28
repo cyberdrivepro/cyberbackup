@@ -85,9 +85,7 @@ cyber_auto_print_profile() {
 cyber_auto_install() {
     local level="${1:-4}"
     cyber_auto_scan
-
-    echo -e "\n${C_BGREEN}=== Initiating CyberVPS Ultra Provisioning (Level $level) ===${C_RESET}"
-    echo -e "Selected Mode: ${C_BCYAN}$CYBER_AUTO_MODE${C_RESET} ($CYBER_AUTO_REASON)\n"
+    ui_scan_view
 
     # Initialize ports config
     init_ports_config
@@ -117,7 +115,7 @@ cyber_auto_install() {
 
     # Ensure CLI helpers and shell integration
     cyber_auto_setup_shell_integration
-    echo -e "\n${C_BGREEN}✔ CyberVPS Ultra Auto Provisioning Complete!${C_RESET}"
+    ui_success_card "$level"
 }
 
 cyber_auto_install_native_root() {

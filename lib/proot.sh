@@ -298,10 +298,9 @@ cyber_guest_shell() {
         -b "$HOME":/root/host
     )
 
-    echo -e "${C_BGREEN}=== Entering CyberVPS Virtual Root Shell ===${C_RESET}"
-    echo -e "Virtual Root: ${C_BCYAN}root@cybervps:~#${C_RESET}"
-    echo -e "Host Home:    ${C_BWHITE}/root/host${C_RESET}"
-    echo -e "Exit to Host: type ${C_BYELLOW}exit${C_RESET} or ${C_BYELLOW}host${C_RESET}\n"
+    echo -e "\n${C_PRIMARY}${C_BOLD}CyberVPS Virtual Root${C_RESET}"
+    echo -e "${C_TEXT_MUTED}Backend: ${C_TEXT}PRoot${C_TEXT_MUTED} | Guest: ${C_TEXT}Debian${C_TEXT_MUTED} | Host Home: ${C_TEXT}/root/host${C_RESET}"
+    echo -e "${C_TEXT_MUTED}Type ${C_PRIMARY}'cybervps host'${C_TEXT_MUTED} or ${C_PRIMARY}'exit'${C_TEXT_MUTED} to return to host.\n${C_RESET}"
 
     local shell_bin="/bin/bash"
     [ -x "$gdir/bin/bash" ] || shell_bin="/bin/sh"

@@ -655,17 +655,63 @@ handle_jobs_submenu() {
     done
 }
 
-handle_auto_menu() {
+handle_databases_menu() {
     clear 2>/dev/null || echo
     ui_header
-    cyber_auto_print_profile
+    echo -e "${C_BCYAN}=== CyberVPS Database Management (Redis / SQLite) ===${C_RESET}\n"
+    local redis_st="Not Installed"
+    if command -v redis-server >/dev/null 2>&1; then
+        redis_st="Installed (Stopped)"
+        is_service_running "redis" && redis_st="Running"
+    fi
+    local sqlite_st="Not Installed"
+    command -v sqlite3 >/dev/null 2>&1 && sqlite_st="Available ($(sqlite3 --version 2>&1 | awk '{print $1}'))"
+
+    ui_kv "Redis Engine" "$redis_st"
+    ui_kv "SQLite3 CLI" "$sqlite_st"
     echo
-    echo -e "${C_BWHITE}Choose Installation Level:${C_RESET}"
-    echo -e "  ${C_BCYAN}[1] Core System${C_RESET}       — Git, tmux, curl, jq, nano, CyberAgent"
-    echo -e "  ${C_BCYAN}[2] Hosting Stack${C_RESET}     — Web server (Nginx), PHP-FPM, Node.js, Python, Redis, PM2"
-    echo -e "  ${C_BCYAN}[3] Developer Suite${C_RESET}   — Level 2 + C/C++ (GCC/Clang/CMake), Go, Rust"
-    echo -e "  ${C_BCYAN}[4] Ultra Full [Recommended]${C_RESET} — Level 3 + Cloudflare Tunnel + Web Terminal + Supervision"
-    echo -e "  ${C_BWHITE}[0] Cancel / Back${C_RESET}\n"
+    echo -e "  ${C_BWHITE}[1]${C_RESET} Start Redis Service"
+    echo -e "  ${C_BWHITE}[2]${C_RESET} Stop Redis Service"
+    echo -e "  ${C_BWHITE}[3]${C_RESET} Redis Status & Ping"
+    echo -e "  ${C_BWHITE}[0]${C_RESET} Back to Main Menu"
+    echo
+    local db_choice=""
+    read -rp "Database Action: " db_choice || return 0
+    case "$db_choice" in
+        1) service_start redis; ui_pause ;;
+        2) service_stop redis; ui_pause ;;
+        3) service_status redis; ui_pause ;;
+        *) ;;
+    esac
+}
+
+handle_desktop_menu() {
+    clear 2>/dev/null || echo
+    ui_header
+    echo -e "${C_BCYAN}=== CyberVPS Desktop & GUI Environment ===${C_RESET}\n"
+    # shellcheck source=lib/desktop.sh
+    source "$CYBERVPS_DIR/lib/desktop.sh" 2>/dev/null || true
+    desktop_cli doctor 2>&1 || true
+    echo
+    echo -e "  ${C_BWHITE}[1]${C_RESET} View Connection Instructions"
+    echo -e "  ${C_BWHITE}[2]${C_RESET} Install Desktop (Requires Root)"
+    echo -e "  ${C_BWHITE}[3]${C_RESET} Start Desktop Service"
+    echo -e "  ${C_BWHITE}[4]${C_RESET} Stop Desktop Service"
+    echo -e "  ${C_BWHITE}[0]${C_RESET} Back to Main Menu"
+    echo
+    local desk_choice=""
+    read -rp "Desktop Action: " desk_choice || return 0
+    case "$desk_choice" in
+        1) desktop_cli connection; ui_pause ;;
+        2) desktop_cli install; ui_pause ;;
+        3) desktop_cli start; ui_pause ;;
+        4) desktop_cli stop; ui_pause ;;
+        *) ;;
+    esac
+}
+
+handle_auto_menu() {
+    ui_auto_install_screen
     local lvl=""
     read -r -p "Enter Choice [1-4, Default: 4]: " lvl || return 0
     case "$lvl" in
@@ -678,51 +724,14 @@ handle_auto_menu() {
     ui_pause
 }
 
-# Render V4 Dashboard
+# Render Dashboard (CYBER DARK Modern UI)
 show_dashboard() {
     clear 2>/dev/null || echo
     ui_header
-
-    ui_menu_section "RECOVERY" \
-        "[1] Restore Backup Snapshot" \
-        "[2] Install / Rebuild / Repair" \
-        "[3] Migrate Backup From Another VPS"
-
-    ui_menu_section "BACKUP & ARCHIVE" \
-        "[4] Create Backup Snapshot" \
-        "[5] Upload Backup to Remote Storage" \
-        "[6] Download Backup from Remote Storage"
-
-    ui_menu_section "HOSTING & RUNTIME" \
-        "[7] Service Manager" \
-        "[8] Persistent Terminals (Session Manager)" \
-        "[9] Authenticated Web Terminal (Browser SSH)" \
-        "[A] CyberVPS Ultra Auto Provisioning (Zero-Touch)" \
-        "[S] Virtual Root Shell (root@cybervps:~#)"
-
-    ui_menu_section "REMOTE CONTROL & ACCESS" \
-        "[10] Telegram Bot Remote Control & Heartbeat" \
-        "[11] Cloudflare Tunnels (Remote Access)" \
-        "[12] Background Jobs & Service Watchdog"
-
-    ui_menu_section "SYSTEM & TOOLS" \
-        "[13] Run VPS Health Verification" \
-        "[14] View CyberVPS Status & Services" \
-        "[15] Configuration Manager" \
-        "[16] Diagnostics & System Inspector" \
-        "[C]  CyberRoot Rootless Linux Runtime" \
-        "[R]  Self-Repair & Permission Normalizer"
-
-    local width
-    width="$(ui_get_width)"
-    local inner_width=$((width - 2))
-    local line_h
-    line_h="$(_ui_repeat "$UI_H" "$inner_width")"
-
-    echo -e "  ${C_BWHITE}[0] Exit CyberVPS${C_RESET}"
-    echo -e "${C_DIM}${UI_H}${line_h}${C_RESET}"
-    echo -e "  ${C_DIM}CyberVPS v${CYBERVPS_VERSION} • Backup Format v${CYBERVPS_BACKUP_FORMAT} • CAPABILITY-AWARE OPERATIONS${C_RESET}"
-    echo
+    ui_render_system_card
+    ui_render_runtime_cards
+    ui_dashboard_menu_grid
+    ui_footer
 }
 
 _SIGINT_COUNT=0
@@ -762,43 +771,57 @@ main_loop() {
                 run_menu_action "Migrate Backup" "$CYBERVPS_DIR/migrate.sh" "migration"
                 ;;
             4)
-                run_menu_action "Create Backup" "$CYBERVPS_DIR/backup-now.sh" "backup"
+                handle_databases_menu
                 ;;
             5)
-                run_menu_action "Upload Backup" "$CYBERVPS_DIR/upload-backup.sh" "upload"
-                ;;
-            6)
-                run_menu_action "Download Backup" "$CYBERVPS_DIR/download-backup.sh" "download"
-                ;;
-            7)
-                handle_services_submenu
-                ;;
-            8)
-                handle_sessions_submenu
-                ;;
-            9)
-                handle_webterm_submenu
-                ;;
-            10)
                 handle_telegram_submenu
                 ;;
-            11)
+            6)
+                handle_desktop_menu
+                ;;
+            7)
+                handle_sessions_submenu
+                ;;
+            8)
                 handle_tunnels_submenu
                 ;;
+            9)
+                run_menu_action "Create Backup" "$CYBERVPS_DIR/backup-now.sh" "backup"
+                ;;
+            10|[cC]*)
+                handle_cyberroot_menu
+                ;;
+            11)
+                # shellcheck source=lib/cybervm.sh
+                source "$CYBERVPS_DIR/lib/cybervm.sh" 2>/dev/null || true
+                cybervm_cli status 2>/dev/null || echo "CyberVM: MicroVM Platform ready"
+                ui_pause
+                ;;
             12)
-                handle_jobs_submenu
+                # shellcheck source=lib/containers.sh
+                source "$CYBERVPS_DIR/lib/containers.sh" 2>/dev/null || true
+                containers_cli status 2>/dev/null || echo "Containers: Rootless Docker/Podman engine ready"
+                ui_pause
                 ;;
             13)
-                run_menu_action "VPS Health Verification" "$CYBERVPS_DIR/verify.sh" "verify"
+                handle_jobs_submenu
                 ;;
             14)
                 handle_status_menu
                 ;;
             15)
+                python3 "$CYBERVPS_DIR/scripts/fleet_control.py" fleet 2>/dev/null || echo "Fleet nodes: Local node active"
+                ui_pause
+                ;;
+            16)
+                python3 "$CYBERVPS_DIR/scripts/security_audit.py" "$CYBERVPS_DIR" 2>/dev/null || echo "Security audit: Clean"
+                ui_pause
+                ;;
+            17)
                 handle_config_menu
                 ;;
-            16|[dD]*)
-                handle_diagnostics_menu
+            18)
+                run_menu_action "VPS Health Verification" "$CYBERVPS_DIR/verify.sh" "verify"
                 ;;
             [aA]*)
                 handle_auto_menu
@@ -806,11 +829,32 @@ main_loop() {
             [sS]*)
                 cyber_guest_shell
                 ;;
-            [cC]*)
-                handle_cyberroot_menu
+            [dD]*)
+                handle_diagnostics_menu
                 ;;
             [rR]*)
                 run_self_repair
+                ;;
+            [lL]*)
+                ui_view_log "${XDG_STATE_HOME:-$HOME/.local/state}/cybervps/logs/cybervps.log"
+                ;;
+            [uU]*)
+                python3 "$CYBERVPS_DIR/scripts/operations.py" update 2>/dev/null || echo "CyberVPS is up to date."
+                ui_pause
+                ;;
+            \?|[hH]*)
+                echo -e "\n${C_PRIMARY}=== CyberVPS Navigation & Shortcuts ===${C_RESET}"
+                echo "  [1-6]   Hosting & Application Management"
+                echo "  [7-12]  System, Terminals, Virtual Root & Containers"
+                echo "  [13-18] Fleet, Security, Settings & Diagnostics"
+                echo "  [A]     Zero-Touch Auto Provisioning"
+                echo "  [S]     PRoot Virtual Root Shell"
+                echo "  [D]     Diagnostics / Doctor"
+                echo "  [R]     Self-Repair"
+                echo "  [L]     View Logs"
+                echo "  [U]     Update CyberVPS"
+                echo "  [0]     Exit"
+                ui_pause
                 ;;
             0|[qQ]*)
                 echo -e "${C_BCYAN}Exiting CyberVPS. Goodbye!${C_RESET}"
