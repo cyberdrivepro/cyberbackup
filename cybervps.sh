@@ -21,6 +21,8 @@ source "$CYBERVPS_DIR/lib/ui.sh"
 source "$CYBERVPS_DIR/lib/execution.sh"
 # shellcheck source=lib/cyberroot.sh
 source "$CYBERVPS_DIR/lib/cyberroot.sh"
+# shellcheck source=lib/sessions.sh
+source "$CYBERVPS_DIR/lib/sessions.sh"
 
 # Ensure user PATH includes user-space locations
 export PATH="$HOME/.local/bin:$HOME/bin:$HOME/apps/micromamba/envs/hosting/bin:$HOME/.cargo/bin:$HOME/go/bin:$HOME/apps/go/bin:$PATH"
@@ -361,11 +363,16 @@ main_loop() {
 if [ "${1:-}" = "--repair" ]; then
     run_self_repair
     exit 0
+elif [ "${1:-}" = "session" ]; then
+    shift
+    handle_session_cli "$@"
+    exit $?
 elif [ "${1:-}" = "--menu" ] || [ -t 0 ]; then
     main_loop
 else
     show_dashboard
     echo "Non-interactive session. Use direct script execution via Bash:"
     echo "  bash backup-now.sh, bash restore.sh, bash fresh-install.sh, bash verify.sh"
+    echo "  cybervps session <command>"
     exit 0
 fi

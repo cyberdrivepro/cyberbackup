@@ -69,6 +69,10 @@ log_ok() {
     printf "${CLR_GREEN}✔${CLR_RESET} %s\n" "$*" >&2
 }
 
+log_success() {
+    log_ok "$@"
+}
+
 log_warn() {
     _write_logfile "WARN" "$@"
     printf "${CLR_YELLOW}⚠${CLR_RESET} %s\n" "$*" >&2
