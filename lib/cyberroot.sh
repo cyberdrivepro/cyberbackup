@@ -43,6 +43,7 @@ handle_cyberroot_menu() {
                 "[4] Install Linux Distribution (Ubuntu / Debian)" \
                 "[5] Snapshot & Restore Manager" \
                 "[6] Garbage Collection & State Cleanup" \
+                "[7] Remote SSH Server (Direct Virtual-Root on Port 8022)" \
                 "[0] Return to Main Menu"
         else
             echo -e "  ${C_BYELLOW}● CyberRoot Status:${C_RESET} Not installed in PATH or ~/.local/bin"
@@ -141,6 +142,30 @@ handle_cyberroot_menu() {
                 if cr_bin="$(find_cyberroot_bin)"; then
                     echo
                     "$cr_bin" gc
+                    echo
+                    read -rp "Press Enter to continue..." _
+                fi
+                ;;
+            7)
+                if cr_bin="$(find_cyberroot_bin)"; then
+                    echo
+                    "$cr_bin" list
+                    echo
+                    local guest_name=""
+                    read -rp "Enter guest name for remote SSH server [testbox]: " guest_name
+                    guest_name="${guest_name:-testbox}"
+                    echo
+                    echo "  [1] Start Remote SSH Server (Port 8022)"
+                    echo "  [2] Check Remote SSH Status"
+                    echo "  [3] Stop Remote SSH Server"
+                    local r_action=""
+                    read -rp "Select action [1]: " r_action
+                    r_action="${r_action:-1}"
+                    case "$r_action" in
+                        1) "$cr_bin" remote start "$guest_name" --port 8022 ;;
+                        2) "$cr_bin" remote status "$guest_name" ;;
+                        3) "$cr_bin" remote stop "$guest_name" ;;
+                    esac
                     echo
                     read -rp "Press Enter to continue..." _
                 fi

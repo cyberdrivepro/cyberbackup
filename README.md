@@ -4,9 +4,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Format: v2](https://img.shields.io/badge/Backup%20Format-v2-success.svg)](docs/BACKUP_FORMAT.md)
 
-**Portable Non-Root Linux VPS Hosting, Backup, Migration, Disaster Recovery, and Fresh Rebuild Toolkit.**
+**Portable Non-Root Linux VPS 24/7 Hosting, Persistent Terminals, Web Terminal, Telegram Control, and Disaster Recovery Platform.**
 
-CyberVPS empowers developers and sysadmins to deploy, persist, backup, migrate, and rebuild complete user-space application environments on **ordinary, unprivileged non-root Linux VPS accounts** without requiring `sudo`, root privileges, Docker, or host package manager modifications.
+CyberVPS empowers developers and sysadmins to operate, supervise, persist, backup, migrate, and rebuild complete user-space application environments on **ordinary, unprivileged non-root Linux VPS accounts** without requiring `sudo`, root privileges, Docker, or host package manager modifications.
 
 ---
 
@@ -18,29 +18,47 @@ cd cyberbackup
 bash cybervps.sh
 ```
 
-Upon launch, CyberVPS inspects the host and renders a polished interactive menu:
+Upon launch, CyberVPS inspects the host and renders the V4 interactive control center:
 
 ```
-╔══════════════════════════════════════════════════════╗
-║                       CyberVPS                       ║
-║        Portable Non-Root Linux Recovery Toolkit      ║
-╚══════════════════════════════════════════════════════╝
-Detected Profile:
-  Host: vps-01 | User: alice | Arch: x86_64
-  Home: /home/alice
-  OS:   Debian GNU/Linux 12 (bookworm) (glibc 2.36)
---------------------------------------------------------
-  [1] Restore Backup to This VPS
-  [2] Fresh Install / Rebuild
-  [3] Migrate Backup From Another VPS
-  [4] Create Backup
-  [5] Upload Backup
-  [6] Download Backup
-  [7] Verify Current VPS
-  [8] CyberVPS Status
-  [9] Configuration
-  [0] Exit
---------------------------------------------------------
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                   CYBERVPS • ROOTLESS CLOUD CONTROL CENTER                   │
+├──────────────────────────────────────────────────────────────────────────────┤
+│  Host: SoloA                          User: srhfqtos (Mode: ROOTLESS)        │
+│  OS:   Debian GNU/Linux 12 (bookworm) Arch: x86_64 (glibc 2.36)              │
+│  Home: /home/srhfqtos                                                        │
+╰──────────────────────────────────────────────────────────────────────────────╯
+  Capabilities: [✓ User-Space] [✓ Git] [✓ Net] [✓ Micromamba] [– Root] [– System Pkgs]
+
+╭─ RECOVERY ───────────────────────────────────────────────────────────────────╮
+│  [1] Restore Backup Snapshot                                                │
+│  [2] Fresh Install / Rootless Rebuild                                       │
+│  [3] Migrate Backup From Another VPS                                        │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ BACKUP & ARCHIVE ───────────────────────────────────────────────────────────╮
+│  [4] Create Backup Snapshot                                                 │
+│  [5] Upload Backup to Remote Storage                                        │
+│  [6] Download Backup from Remote Storage                                    │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ HOSTING & RUNTIME ──────────────────────────────────────────────────────────╮
+│  [7] Service Manager (Persistent 24/7 Daemons)                              │
+│  [8] Persistent Terminals (Session Manager)                                 │
+│  [9] Authenticated Web Terminal (Browser SSH)                               │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ REMOTE CONTROL & ACCESS ────────────────────────────────────────────────────╮
+│  [10] Telegram Bot Remote Control & Heartbeat                               │
+│  [11] Cloudflare Tunnels (Remote Access)                                    │
+│  [12] Background Jobs & Service Watchdog                                    │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ SYSTEM & TOOLS ─────────────────────────────────────────────────────────────╮
+│  [13] Run VPS Health Verification                                           │
+│  [14] View CyberVPS Status & Services                                       │
+│  [15] Configuration Manager                                                 │
+│  [16] Diagnostics & System Inspector                                        │
+│  [C]  CyberRoot Rootless Linux Runtime                                      │
+│  [R]  Self-Repair & Permission Normalizer                                   │
+╰──────────────────────────────────────────────────────────────────────────────╯
+  [0] Exit CyberVPS
 ```
 
 ---
@@ -48,14 +66,15 @@ Detected Profile:
 ## 🌟 Key Capabilities
 
 1. **Zero Root / Sudo Required:** Runs completely inside user-space. Zero `sudo`, `su`, `apt`, `dnf`, or root daemon modifications.
-2. **Disaster Recovery:** Rebuilds entire runtime environments (Python, Node, Go, Rust, PM2, Cloudflared) after near-total `$HOME` loss.
-3. **Cross-VPS Migration:** Intelligently migrates configurations across VPS providers, translating paths (`/home/userA` to `/home/userB`) and reallocating conflicting ports.
-4. **Dynamic Port Allocator:** Discovers free unprivileged localhost ports (`>= 1024`), ensuring zero collisions on multi-user VPS hosts.
-5. **Localhost-Only Security:** All internal listeners (Redis, Nginx, APIs, supervisor) bind strictly to `127.0.0.1` by default.
-6. **Multi-Backend Process Persistence:** Automatically selects the best persistence backend available (`systemd --user`, `tmux`, `screen`, or `nohup` + PID tracking).
-7. **Login-Triggered Recovery:** Idempotent shell startup integration restores services automatically upon SSH login without claiming true boot autostart.
-8. **Automated Secret Filtering:** Automated scanner verifies that no credentials, tokens, or private keys are committed or exported in plaintext.
-9. **Optional Encrypted Secrets:** Encrypts sensitive credentials via OpenSSL AES-256 with PBKDF2 using an interactive passphrase.
+2. **Persistent 24/7 Hosting:** Operates daemons independently of interactive SSH sessions and laptop power state.
+3. **Persistent Terminal Sessions:** Multiplexed tmux/screen workspaces that survive connection drops, disconnects, and terminal window closures.
+4. **Authenticated Browser Web Terminal:** Powered by rootless `ttyd`, bound strictly to `127.0.0.1` with mandatory credentials and tunnel support.
+5. **Telegram Remote Control & Heartbeat:** Pure Python 3 standard library daemon with interactive buttons, secret redaction, audit logging, and automated 7-minute liveness heartbeats.
+6. **Encrypted Cloudflare Tunnels:** Quick and named tunnels via `cloudflared` to securely expose local web terminals without open firewall ports or public IPv4 addresses.
+7. **Background Jobs & Service Watchdog:** Long-running task detachment via `nohup` with state tracking and an automated service watchdog with exponential crash backoff.
+8. **Disaster Recovery & Migration:** Rebuilds entire runtime environments (Python, Node, Go, Rust, PM2, Cloudflared) and migrates setups across VPS providers.
+9. **Dynamic Port Allocator:** Discovers free unprivileged localhost ports (`>= 1024`), ensuring zero collisions on multi-user VPS hosts.
+10. **Strict Credential Security:** All tokens, keys, and passwords stored in `~/.config/cybervps/` (mode 0600) strictly outside Git, validated by an automated pre-commit secret scanner.
 
 ---
 
@@ -63,91 +82,142 @@ Detected Profile:
 
 ```
 cyberbackup/
-├── cybervps.sh           # Master interactive terminal interface
-├── backup-now.sh         # CLI entry point for creating snapshots
-├── restore.sh            # CLI entry point for restoring backups
-├── migrate.sh            # CLI entry point for cross-host migration
-├── fresh-install.sh      # CLI entry point for zero-state rebuilds
-├── verify.sh             # System health & compatibility verifier
-├── upload-backup.sh      # Remote storage upload helper
-├── download-backup.sh    # Remote storage download helper
-├── VERSION               # Current CyberVPS version
-├── LICENSE               # MIT License
-├── README.md             # Project documentation
-├── CHANGELOG.md          # Release history
-├── SECURITY.md           # Security policy and credential handling
-├── CONTRIBUTING.md       # Development and contribution guide
-├── remote.example.conf   # Template for remote storage providers
+├── cybervps.sh               # Master interactive terminal interface & CLI router
+├── backup-now.sh             # Snapshot backup engine entry point
+├── restore.sh                # Backup restoration engine entry point
+├── migrate.sh                # Cross-host VPS migration entry point
+├── fresh-install.sh          # Zero-state user-space rebuild entry point
+├── verify.sh                 # VPS health & capability verifier
+├── upload-backup.sh          # Remote storage upload helper
+├── download-backup.sh        # Remote storage download helper
+├── agent/
+│   └── cybervps_telegram.py  # Telegram remote administration & heartbeat agent
+├── installers/
+│   └── ttyd.sh               # Rootless ttyd installer
 ├── lib/
-│   ├── common.sh         # Locks, constrained env parser, download helpers
-│   ├── logging.sh        # Structured logging with severity levels
-│   ├── detect.sh         # Identity, architecture, libc, and hardware detection
-│   ├── ports.sh          # Dynamic rootless port allocator
-│   ├── install.sh        # User-space dependency installer engine
-│   ├── services.sh       # Process backend abstraction & CLI helpers
-│   ├── backup.sh         # Format v2 backup engine & manifest generation
-│   ├── restore.sh        # Safe restore engine & rollback management
-│   ├── migration.sh      # Cross-VPS comparison and path translation
-│   ├── verify.sh         # Categorized verification engine (supports --json)
-│   └── remote.sh         # Rclone and remote storage synchronization
-├── tests/                # Automated test suite
-│   ├── test-detect.sh
-│   ├── test-ports.sh
-│   ├── test-config.sh
-│   ├── test-idempotency.sh
-│   ├── test-backup-layout.sh
-│   ├── test-migration-paths.sh
-│   ├── test-menu.sh
-│   ├── test-secret-filter.sh
-│   └── run-tests.sh      # Test suite runner
-└── docs/                 # Detailed technical specifications
-    ├── STATUS.md
-    ├── ARCHITECTURE.md
-    ├── BACKUP_FORMAT.md
-    ├── RESTORE.md
-    ├── MIGRATION.md
-    ├── SERVICE_BACKENDS.md
-    └── TROUBLESHOOTING.md
+│   ├── common.sh             # Core utilities, locks, and logging helpers
+│   ├── detect.sh             # Identity, architecture, libc, and system detection
+│   ├── ports.sh              # Rootless dynamic port allocator
+│   ├── services.sh           # Persistent daemon supervisor & health checker
+│   ├── sessions.sh           # Persistent terminal session manager
+│   ├── persistence.sh        # Multi-tier boot autostart & login recovery engine
+│   ├── webterm.sh            # Authenticated browser web terminal manager
+│   ├── tunnel.sh             # Cloudflare tunnel manager
+│   ├── telegram.sh           # Telegram bot CLI & configuration manager
+│   ├── jobs.sh               # Background job executor & service watchdog
+│   ├── cyberroot.sh          # Rootless container runtime integration
+│   ├── execution.sh          # Centralized script runner & error boundary
+│   └── ui.sh                 # ANSI box-drawing and dashboard rendering
+├── scripts/                  # CLI command wrapper binaries
+│   ├── cybervps-service
+│   ├── cybervps-session
+│   ├── cybervps-persistence
+│   ├── cybervps-webterm
+│   ├── cybervps-tunnel
+│   ├── cybervps-telegram
+│   ├── cybervps-job
+│   ├── root-command-guard.sh
+│   └── secret-check.sh
+├── tests/                    # 20+ automated unit & integration test suites
+│   ├── run-tests.sh          # Master test runner
+│   ├── test-services.sh
+│   ├── test-sessions.sh
+│   ├── test-persistence.sh
+│   ├── test-webterm.sh
+│   ├── test-tunnel.sh
+│   ├── test-telegram.sh
+│   └── test-jobs.sh
+└── docs/                     # Technical specifications & guides
+    ├── PERSISTENCE.md        # Multi-tier boot and recovery engine
+    ├── SERVICES.md           # Rootless persistent service manager
+    ├── SESSIONS.md           # Persistent terminal session manager
+    ├── WEB_TERMINAL.md       # Browser web terminal & auth
+    ├── TELEGRAM.md           # Telegram remote control & heartbeat
+    ├── TUNNELS.md            # Cloudflare remote tunnels
+    ├── JOBS.md               # Asynchronous jobs & watchdog supervisor
+    ├── SECURITY.md           # Security model & credential isolation
+    ├── ARCHITECTURE.md       # Core subsystem architecture
+    └── BACKUP_FORMAT.md      # Format v2 specification
 ```
 
 ---
 
-## 💻 CLI Usage
+## 💻 CLI Commands
 
-All tasks can be executed non-interactively or in automated scripts:
+All components support direct non-interactive CLI control:
 
-### Create a Portable Backup
+### Persistent Terminals
 ```bash
-bash ./backup-now.sh [options]
-
-# Options:
-#   --include-shared     Include ~/shared in a separate archive
-#   --encrypt-secrets    Create an encrypted archive of secrets using OpenSSL
-#   --dry-run            Simulate backup without creating archive
-#   --verbose            Enable debug logging
+cybervps session new workspace             # Launch persistent session
+cybervps session list                      # List active sessions
+cybervps session attach workspace          # Attach to session
+cybervps session logs workspace 50         # View terminal buffer logs
+cybervps session stop workspace            # Terminate session
 ```
 
-### Restore a Backup
+### Persistent Services (24/7 Hosting)
 ```bash
-bash ./restore.sh --archive downloads/cybervps-backup-YYYYMMDD-HHMMSS.tar.zst
-# Supports --dry-run and --force-rebuild
+cybervps service add web --cmd "python3 -m http.server 8080" --port 8080
+cybervps service start web
+cybervps service list
+cybervps service status web
+cybervps service logs web 50
+cybervps service restart web
+cybervps service stop web
 ```
 
-### Migrate Backup From Another VPS
+### Authenticated Web Terminal
 ```bash
-bash ./migrate.sh --archive downloads/cybervps-backup-YYYYMMDD-HHMMSS.tar.zst
+cybervps webterm set-password admin MyStrongPassword123!
+cybervps webterm start                     # Runs on 127.0.0.1:7681
+cybervps webterm status
+cybervps webterm logs
+cybervps webterm stop
 ```
 
-### Fresh Rebuild from Zero
+### Cloudflare Tunnels
 ```bash
-bash ./fresh-install.sh
+cybervps tunnel quick 7681                 # Quick HTTPS tunnel to web terminal
+cybervps tunnel url                        # Display public HTTPS URL
+cybervps tunnel status
+cybervps tunnel stop
 ```
 
-### Health Verification
+### Telegram Bot Remote Control & Heartbeat
 ```bash
-bash ./verify.sh
-# Machine-readable JSON output:
-bash ./verify.sh --json
+cybervps telegram set-token "<YOUR_BOT_TOKEN>"
+cybervps telegram set-users 123456789
+cybervps telegram configure-heartbeat true 7 compact
+cybervps telegram test                     # Verify API connectivity
+cybervps telegram start                    # Run as persistent 24/7 service
+cybervps telegram logs 50
+cybervps telegram stop
+```
+
+### Background Jobs & Service Watchdog
+```bash
+cybervps job run backup-task "bash backup-now.sh"
+cybervps job list
+cybervps job logs backup-task 50
+cybervps job cancel backup-task
+cybervps job watchdog                      # Auto-recover failed services with backoff
+```
+
+### Persistence Engine
+```bash
+cybervps persistence status                # View current tier (linger, cron, bashrc)
+cybervps persistence install               # Install recovery hooks
+cybervps persistence recover               # Trigger immediate service recovery
+```
+
+---
+
+## 🧪 Automated Testing
+
+CyberVPS includes an automated, non-destructive test suite that executes in isolated temporary sandboxes:
+
+```bash
+bash tests/run-tests.sh
 ```
 
 ---
@@ -155,20 +225,9 @@ bash ./verify.sh --json
 ## 🔒 Security Principles
 
 - **Zero Root Privilege Escalation:** CyberVPS never runs `sudo` or modifies system directories.
-- **Provider Compliance:** CyberVPS does **not** disguise process names or implement watchdog bypasses. If a provider policy prohibits a component, it disables it and logs a clear notice.
-- **Localhost Default:** Network services bind strictly to `127.0.0.1`.
-- **Integrity Verification:** Every snapshot generates SHA256 checksums in `SHA256SUMS` and `latest.json`.
-- **Secret Scanning:** Run `bash ./scripts/secret-check.sh` at any time to verify repository safety.
-
----
-
-## 🧪 Testing
-
-CyberVPS includes an automated, non-destructive test suite that runs in temporary sandboxes:
-
-```bash
-bash ./tests/run-tests.sh
-```
+- **Strict Credential Isolation:** Credentials and tokens stored at mode `0600` strictly outside Git.
+- **Loopback Default:** Web terminal and private daemons bind strictly to `127.0.0.1`.
+- **Pre-Commit Secret Scanner:** Statically scans candidate commits to ensure zero credential leaks (`bash scripts/secret-check.sh`).
 
 ---
 
