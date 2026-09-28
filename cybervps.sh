@@ -259,7 +259,413 @@ run_menu_action() {
     fi
 }
 
-# Render V3 Dashboard
+# ==============================================================================
+# SUBMENUS FOR HOSTING & REMOTE OPERATIONS (V4)
+# ==============================================================================
+
+# Submenu: Service Manager
+handle_services_submenu() {
+    while true; do
+        clear 2>/dev/null || echo
+        ui_header
+        echo -e "${C_BCYAN}=== CyberVPS Rootless Service Manager (24/7 Hosting) ===${C_RESET}"
+        echo
+        service_list
+        echo
+        echo -e "  ${C_BWHITE}[1]${C_RESET} List Services"
+        echo -e "  ${C_BWHITE}[2]${C_RESET} Start Service"
+        echo -e "  ${C_BWHITE}[3]${C_RESET} Stop Service"
+        echo -e "  ${C_BWHITE}[4]${C_RESET} Restart Service"
+        echo -e "  ${C_BWHITE}[5]${C_RESET} View Service Logs"
+        echo -e "  ${C_BWHITE}[6]${C_RESET} Enable Service Autostart"
+        echo -e "  ${C_BWHITE}[7]${C_RESET} Disable Service Autostart"
+        echo -e "  ${C_BWHITE}[0]${C_RESET} Return to Main Menu"
+        echo
+        local choice=""
+        read -rp "Service Action: " choice || break
+        case "$choice" in
+            1)
+                clear 2>/dev/null || echo
+                service_list
+                ui_pause
+                ;;
+            2)
+                local sname=""
+                read -rp "Service name to start: " sname
+                [ -n "$sname" ] && service_start "$sname"
+                ui_pause
+                ;;
+            3)
+                local sname=""
+                read -rp "Service name to stop: " sname
+                [ -n "$sname" ] && service_stop "$sname"
+                ui_pause
+                ;;
+            4)
+                local sname=""
+                read -rp "Service name to restart: " sname
+                [ -n "$sname" ] && service_restart "$sname"
+                ui_pause
+                ;;
+            5)
+                local sname=""
+                read -rp "Service name to view logs: " sname
+                [ -n "$sname" ] && service_logs "$sname" 30
+                ui_pause
+                ;;
+            6)
+                local sname=""
+                read -rp "Service name to enable autostart: " sname
+                [ -n "$sname" ] && service_enable "$sname"
+                ui_pause
+                ;;
+            7)
+                local sname=""
+                read -rp "Service name to disable autostart: " sname
+                [ -n "$sname" ] && service_disable "$sname"
+                ui_pause
+                ;;
+            0|[qQ]*)
+                break
+                ;;
+        esac
+    done
+}
+
+# Submenu: Persistent Terminals
+handle_sessions_submenu() {
+    while true; do
+        clear 2>/dev/null || echo
+        ui_header
+        echo -e "${C_BCYAN}=== CyberVPS Persistent Terminal Sessions ===${C_RESET}"
+        echo
+        session_list
+        echo
+        echo -e "  ${C_BWHITE}[1]${C_RESET} List Active Sessions"
+        echo -e "  ${C_BWHITE}[2]${C_RESET} Create New Session"
+        echo -e "  ${C_BWHITE}[3]${C_RESET} Attach to Session"
+        echo -e "  ${C_BWHITE}[4]${C_RESET} Stop Session"
+        echo -e "  ${C_BWHITE}[5]${C_RESET} View Session Logs"
+        echo -e "  ${C_BWHITE}[6]${C_RESET} Clean Terminated Sessions"
+        echo -e "  ${C_BWHITE}[0]${C_RESET} Return to Main Menu"
+        echo
+        local choice=""
+        read -rp "Terminal Action: " choice || break
+        case "$choice" in
+            1)
+                clear 2>/dev/null || echo
+                session_list
+                ui_pause
+                ;;
+            2)
+                local sname="" scmd=""
+                read -rp "Session name: " sname
+                read -rp "Initial command (leave empty for shell): " scmd
+                [ -n "$sname" ] && session_new "$sname" "$scmd"
+                ui_pause
+                ;;
+            3)
+                local sname=""
+                read -rp "Session name to attach: " sname
+                if [ -n "$sname" ]; then
+                    session_attach "$sname"
+                fi
+                ;;
+            4)
+                local sname=""
+                read -rp "Session name to stop: " sname
+                [ -n "$sname" ] && session_stop "$sname"
+                ui_pause
+                ;;
+            5)
+                local sname=""
+                read -rp "Session name to view logs: " sname
+                [ -n "$sname" ] && session_logs "$sname" 30
+                ui_pause
+                ;;
+            6)
+                session_clean
+                ui_pause
+                ;;
+            0|[qQ]*)
+                break
+                ;;
+        esac
+    done
+}
+
+# Submenu: Authenticated Web Terminal
+handle_webterm_submenu() {
+    while true; do
+        clear 2>/dev/null || echo
+        ui_header
+        echo -e "${C_BCYAN}=== CyberVPS Authenticated Browser Web Terminal ===${C_RESET}"
+        echo
+        webterm_status
+        echo
+        echo -e "  ${C_BWHITE}[1]${C_RESET} View Status & Connection Info"
+        echo -e "  ${C_BWHITE}[2]${C_RESET} Start Web Terminal (ttyd)"
+        echo -e "  ${C_BWHITE}[3]${C_RESET} Stop Web Terminal"
+        echo -e "  ${C_BWHITE}[4]${C_RESET} Set / Change Password"
+        echo -e "  ${C_BWHITE}[5]${C_RESET} View Web Terminal Logs"
+        echo -e "  ${C_BWHITE}[0]${C_RESET} Return to Main Menu"
+        echo
+        local choice=""
+        read -rp "Web Terminal Action: " choice || break
+        case "$choice" in
+            1)
+                clear 2>/dev/null || echo
+                webterm_status
+                ui_pause
+                ;;
+            2)
+                webterm_start
+                ui_pause
+                ;;
+            3)
+                webterm_stop
+                ui_pause
+                ;;
+            4)
+                local u="" p=""
+                read -rp "Username: " u
+                read -s -rp "Password: " p
+                echo
+                if [ -n "$u" ] && [ -n "$p" ]; then
+                    webterm_set_password "$u" "$p"
+                fi
+                ui_pause
+                ;;
+            5)
+                webterm_logs 30
+                ui_pause
+                ;;
+            0|[qQ]*)
+                break
+                ;;
+        esac
+    done
+}
+
+# Submenu: Telegram Heartbeat Settings
+handle_heartbeat_settings_menu() {
+    while true; do
+        clear 2>/dev/null || echo
+        ui_header
+        echo -e "${C_BCYAN}=== Telegram Heartbeat Configuration ===${C_RESET}"
+        echo
+        telegram_status
+        echo
+        echo -e "  ${C_BWHITE}[1]${C_RESET} Enable Heartbeat (7 min compact)"
+        echo -e "  ${C_BWHITE}[2]${C_RESET} Set Custom Interval (minutes)"
+        echo -e "  ${C_BWHITE}[3]${C_RESET} Toggle Mode (compact vs message)"
+        echo -e "  ${C_BWHITE}[4]${C_RESET} Disable Heartbeat"
+        echo -e "  ${C_BWHITE}[0]${C_RESET} Return to Telegram Menu"
+        echo
+        local choice=""
+        read -rp "Heartbeat Option: " choice || break
+        case "$choice" in
+            1)
+                telegram_configure_heartbeat "true" 7 "compact"
+                ui_pause
+                ;;
+            2)
+                local int_m=""
+                read -rp "Enter interval in minutes (5-60): " int_m
+                if [[ "$int_m" =~ ^[0-9]+$ ]] && [ "$int_m" -ge 1 ]; then
+                    telegram_configure_heartbeat "true" "$int_m" "compact"
+                else
+                    ui_warning "Invalid interval: $int_m"
+                fi
+                ui_pause
+                ;;
+            3)
+                local m=""
+                read -rp "Choose mode (compact / message): " m
+                if [ "$m" = "compact" ] || [ "$m" = "message" ]; then
+                    telegram_configure_heartbeat "true" 7 "$m"
+                else
+                    ui_warning "Mode must be 'compact' or 'message'"
+                fi
+                ui_pause
+                ;;
+            4)
+                telegram_configure_heartbeat "false" 7 "compact"
+                ui_pause
+                ;;
+            0|[qQ]*)
+                break
+                ;;
+        esac
+    done
+}
+
+# Submenu: Telegram Bot Remote Control
+handle_telegram_submenu() {
+    while true; do
+        clear 2>/dev/null || echo
+        ui_header
+        echo -e "${C_BCYAN}=== CyberVPS Telegram Remote Administration & Heartbeat ===${C_RESET}"
+        echo
+        telegram_status
+        echo
+        echo -e "  ${C_BWHITE}[1]${C_RESET} Test Bot Connection (getMe)"
+        echo -e "  ${C_BWHITE}[2]${C_RESET} Start Telegram Bot Service"
+        echo -e "  ${C_BWHITE}[3]${C_RESET} Stop Telegram Bot Service"
+        echo -e "  ${C_BWHITE}[4]${C_RESET} Configure Heartbeat Settings"
+        echo -e "  ${C_BWHITE}[5]${C_RESET} Set Authorized Admin User IDs"
+        echo -e "  ${C_BWHITE}[6]${C_RESET} Store / Update Bot Token (0600)"
+        echo -e "  ${C_BWHITE}[7]${C_RESET} View Telegram Logs"
+        echo -e "  ${C_BWHITE}[0]${C_RESET} Return to Main Menu"
+        echo
+        local choice=""
+        read -rp "Telegram Action: " choice || break
+        case "$choice" in
+            1)
+                telegram_test
+                ui_pause
+                ;;
+            2)
+                telegram_start
+                ui_pause
+                ;;
+            3)
+                telegram_stop
+                ui_pause
+                ;;
+            4)
+                handle_heartbeat_settings_menu
+                ;;
+            5)
+                local uids=""
+                read -rp "Enter Telegram Admin User ID(s) separated by space: " uids
+                if [ -n "$uids" ]; then
+                    telegram_set_users "$uids"
+                fi
+                ui_pause
+                ;;
+            6)
+                local tok=""
+                read -s -rp "Enter Telegram Bot Token: " tok
+                echo
+                if [ -n "$tok" ]; then
+                    telegram_set_token "$tok"
+                fi
+                ui_pause
+                ;;
+            7)
+                telegram_logs 30
+                ui_pause
+                ;;
+            0|[qQ]*)
+                break
+                ;;
+        esac
+    done
+}
+
+# Submenu: Cloudflare Tunnels
+handle_tunnels_submenu() {
+    while true; do
+        clear 2>/dev/null || echo
+        ui_header
+        echo -e "${C_BCYAN}=== CyberVPS Remote Cloudflare Tunnels ===${C_RESET}"
+        echo
+        tunnel_status
+        echo
+        echo -e "  ${C_BWHITE}[1]${C_RESET} Start Quick Tunnel (trycloudflare)"
+        echo -e "  ${C_BWHITE}[2]${C_RESET} Stop Active Tunnel"
+        echo -e "  ${C_BWHITE}[3]${C_RESET} View Public Tunnel URL"
+        echo -e "  ${C_BWHITE}[4]${C_RESET} View Tunnel Logs"
+        echo -e "  ${C_BWHITE}[0]${C_RESET} Return to Main Menu"
+        echo
+        local choice=""
+        read -rp "Tunnel Action: " choice || break
+        case "$choice" in
+            1)
+                local tport=""
+                read -rp "Target local port to tunnel (default 7681): " tport
+                [ -z "$tport" ] && tport=7681
+                tunnel_quick_start "$tport"
+                ui_pause
+                ;;
+            2)
+                tunnel_stop
+                ui_pause
+                ;;
+            3)
+                echo "Current Tunnel Public URL:"
+                tunnel_url
+                ui_pause
+                ;;
+            4)
+                tunnel_logs 30
+                ui_pause
+                ;;
+            0|[qQ]*)
+                break
+                ;;
+        esac
+    done
+}
+
+# Submenu: Background Jobs & Watchdog
+handle_jobs_submenu() {
+    while true; do
+        clear 2>/dev/null || echo
+        ui_header
+        echo -e "${C_BCYAN}=== CyberVPS Persistent Background Tasks & Watchdog ===${C_RESET}"
+        echo
+        job_list
+        echo
+        echo -e "  ${C_BWHITE}[1]${C_RESET} List Background Jobs"
+        echo -e "  ${C_BWHITE}[2]${C_RESET} Launch New Background Job"
+        echo -e "  ${C_BWHITE}[3]${C_RESET} View Job Logs"
+        echo -e "  ${C_BWHITE}[4]${C_RESET} Cancel Running Job"
+        echo -e "  ${C_BWHITE}[5]${C_RESET} Run Service Watchdog Check"
+        echo -e "  ${C_BWHITE}[0]${C_RESET} Return to Main Menu"
+        echo
+        local choice=""
+        read -rp "Job Action: " choice || break
+        case "$choice" in
+            1)
+                clear 2>/dev/null || echo
+                job_list
+                ui_pause
+                ;;
+            2)
+                local jname="" jcmd=""
+                read -rp "Job Name: " jname
+                read -rp "Command to run in background: " jcmd
+                if [ -n "$jname" ] && [ -n "$jcmd" ]; then
+                    job_run "$jname" "$jcmd"
+                fi
+                ui_pause
+                ;;
+            3)
+                local jname=""
+                read -rp "Job Name to view logs: " jname
+                [ -n "$jname" ] && job_logs "$jname" 30
+                ui_pause
+                ;;
+            4)
+                local jname=""
+                read -rp "Job Name to cancel: " jname
+                [ -n "$jname" ] && job_cancel "$jname"
+                ui_pause
+                ;;
+            5)
+                job_watchdog
+                ui_pause
+                ;;
+            0|[qQ]*)
+                break
+                ;;
+        esac
+    done
+}
+
+# Render V4 Dashboard
 show_dashboard() {
     clear 2>/dev/null || echo
     ui_header
@@ -274,13 +680,23 @@ show_dashboard() {
         "[5] Upload Backup to Remote Storage" \
         "[6] Download Backup from Remote Storage"
 
+    ui_menu_section "HOSTING & RUNTIME" \
+        "[7] Service Manager (Persistent 24/7 Daemons)" \
+        "[8] Persistent Terminals (Session Manager)" \
+        "[9] Authenticated Web Terminal (Browser SSH)"
+
+    ui_menu_section "REMOTE CONTROL & ACCESS" \
+        "[10] Telegram Bot Remote Control & Heartbeat" \
+        "[11] Cloudflare Tunnels (Remote Access)" \
+        "[12] Background Jobs & Service Watchdog"
+
     ui_menu_section "SYSTEM & TOOLS" \
-        "[7] Run VPS Health Verification" \
-        "[8] View CyberVPS Status & Services" \
-        "[9] Configuration Manager" \
-        "[C] CyberRoot Rootless Linux Runtime" \
-        "[D] System Diagnostics & Inspector" \
-        "[R] Self-Repair & Permission Normalizer"
+        "[13] Run VPS Health Verification" \
+        "[14] View CyberVPS Status & Services" \
+        "[15] Configuration Manager" \
+        "[16] Diagnostics & System Inspector" \
+        "[C]  CyberRoot Rootless Linux Runtime" \
+        "[R]  Self-Repair & Permission Normalizer"
 
     local width
     width="$(ui_get_width)"
@@ -290,7 +706,7 @@ show_dashboard() {
 
     echo -e "  ${C_BWHITE}[0] Exit CyberVPS${C_RESET}"
     echo -e "${C_DIM}${UI_H}${line_h}${C_RESET}"
-    echo -e "  ${C_DIM}CyberVPS v${CYBERVPS_VERSION} • Backup Format v${CYBERVPS_BACKUP_FORMAT} • ROOTLESS CLOUD MODE${C_RESET}"
+    echo -e "  ${C_DIM}CyberVPS v${CYBERVPS_VERSION} • Backup Format v${CYBERVPS_BACKUP_FORMAT} • ROOTLESS PERSISTENT OPERATIONS${C_RESET}"
     echo
 }
 
@@ -340,19 +756,37 @@ main_loop() {
                 run_menu_action "Download Backup" "$CYBERVPS_DIR/download-backup.sh" "download"
                 ;;
             7)
-                run_menu_action "VPS Health Verification" "$CYBERVPS_DIR/verify.sh" "verify"
+                handle_services_submenu
                 ;;
             8)
-                handle_status_menu
+                handle_sessions_submenu
                 ;;
             9)
+                handle_webterm_submenu
+                ;;
+            10)
+                handle_telegram_submenu
+                ;;
+            11)
+                handle_tunnels_submenu
+                ;;
+            12)
+                handle_jobs_submenu
+                ;;
+            13)
+                run_menu_action "VPS Health Verification" "$CYBERVPS_DIR/verify.sh" "verify"
+                ;;
+            14)
+                handle_status_menu
+                ;;
+            15)
                 handle_config_menu
+                ;;
+            16|[dD]*)
+                handle_diagnostics_menu
                 ;;
             [cC]*)
                 handle_cyberroot_menu
-                ;;
-            10|[dD]*)
-                handle_diagnostics_menu
                 ;;
             [rR]*)
                 run_self_repair

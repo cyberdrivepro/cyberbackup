@@ -53,6 +53,65 @@ telegram_set_token() {
     log_ok "Telegram bot token saved securely in $TG_TOKEN_FILE (0600)."
 }
 
+# Configure heartbeat parameters
+telegram_configure_heartbeat() {
+    local enabled="${1:-true}"
+    local interval="${2:-7}"
+    local mode="${3:-compact}"
+    telegram_init_dirs
+
+    local admins="\"admin_user_ids\": []"
+    if [ -f "$TG_CONFIG_FILE" ]; then
+        local a
+        a="$(grep -o '"admin_user_ids": *\[[^]]*\]' "$TG_CONFIG_FILE" 2>/dev/null || true)"
+        [ -n "$a" ] && admins="$a"
+    fi
+
+    cat > "$TG_CONFIG_FILE" <<EOF
+{
+  $admins,
+  "heartbeat_enabled": $enabled,
+  "heartbeat_interval_minutes": $interval,
+  "heartbeat_mode": "$mode",
+  "audit_logging": true
+}
+EOF
+    chmod 0600 "$TG_CONFIG_FILE" 2>/dev/null || true
+    log_ok "Telegram heartbeat settings updated (enabled: $enabled, interval: ${interval}m, mode: $mode)."
+}
+
+# Set authorized admin user IDs
+telegram_set_users() {
+    local uids="$*"
+    telegram_init_dirs
+    local json_arr="["
+    local first=1
+    for uid in $uids; do
+        [ "$first" -eq 1 ] && first=0 || json_arr+=", "
+        json_arr+="$uid"
+    done
+    json_arr+="]"
+
+    local hb_enabled="true" hb_interval="7" hb_mode="compact"
+    if [ -f "$TG_CONFIG_FILE" ]; then
+        hb_enabled="$(grep -o '"heartbeat_enabled": *[a-zA-Z]*' "$TG_CONFIG_FILE" 2>/dev/null | awk '{print $2}' || echo "true")"
+        hb_interval="$(grep -o '"heartbeat_interval_minutes": *[0-9]*' "$TG_CONFIG_FILE" 2>/dev/null | grep -o '[0-9]*' || echo "7")"
+        hb_mode="$(grep -o '"heartbeat_mode": *"[^"]*"' "$TG_CONFIG_FILE" 2>/dev/null | cut -d'"' -f4 || echo "compact")"
+    fi
+
+    cat > "$TG_CONFIG_FILE" <<EOF
+{
+  "admin_user_ids": $json_arr,
+  "heartbeat_enabled": $hb_enabled,
+  "heartbeat_interval_minutes": $hb_interval,
+  "heartbeat_mode": "$hb_mode",
+  "audit_logging": true
+}
+EOF
+    chmod 0600 "$TG_CONFIG_FILE" 2>/dev/null || true
+    log_ok "Telegram admin user IDs updated: $json_arr"
+}
+
 # Start Telegram bot as a persistent CyberVPS service
 telegram_start() {
     telegram_init_dirs
@@ -197,6 +256,12 @@ handle_telegram_cli() {
             fi
             telegram_set_token "$1"
             ;;
+        configure-heartbeat)
+            telegram_configure_heartbeat "$@"
+            ;;
+        set-users)
+            telegram_set_users "$@"
+            ;;
         help|--help|-h)
             echo "CyberVPS Telegram Remote Administration"
             echo "Usage: cybervps telegram <command> [args...]"
@@ -209,6 +274,8 @@ handle_telegram_cli() {
             echo "  test        Test connectivity to Telegram API (getMe)"
             echo "  logs        View Telegram service logs"
             echo "  set-token   Store bot token securely outside git (0600)"
+            echo "  configure-heartbeat <true|false> [minutes] [mode]"
+            echo "  set-users   <id1> [id2...]"
             ;;
         *)
             log_error "Unknown telegram command: '$action'. Try: cybervps telegram help"
