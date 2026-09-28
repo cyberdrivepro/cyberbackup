@@ -137,3 +137,8 @@ init_ports_config() {
     reserve_or_select_port "REDIS_PORT" 6380 >/dev/null 2>&1 || true
     log_debug "Ports configuration initialized at $PORTS_CONFIG_FILE"
 }
+
+# Alias for reserve_or_select_port
+get_port() {
+    reserve_or_select_port "$@"
+}

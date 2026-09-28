@@ -25,6 +25,8 @@ source "$CYBERVPS_DIR/lib/cyberroot.sh"
 source "$CYBERVPS_DIR/lib/sessions.sh"
 # shellcheck source=lib/persistence.sh
 source "$CYBERVPS_DIR/lib/persistence.sh"
+# shellcheck source=lib/webterm.sh
+source "$CYBERVPS_DIR/lib/webterm.sh"
 
 # Ensure user PATH includes user-space locations
 export PATH="$HOME/.local/bin:$HOME/bin:$HOME/apps/micromamba/envs/hosting/bin:$HOME/.cargo/bin:$HOME/go/bin:$HOME/apps/go/bin:$PATH"
@@ -377,6 +379,10 @@ elif [ "${1:-}" = "persistence" ]; then
     shift
     handle_persistence_cli "$@"
     exit $?
+elif [ "${1:-}" = "webterm" ]; then
+    shift
+    handle_webterm_cli "$@"
+    exit $?
 elif [ "${1:-}" = "--menu" ] || [ -t 0 ]; then
     main_loop
 else
@@ -386,5 +392,6 @@ else
     echo "  cybervps session <command>"
     echo "  cybervps service <command>"
     echo "  cybervps persistence <command>"
+    echo "  cybervps webterm <command>"
     exit 0
 fi

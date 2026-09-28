@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# scripts/cybervps-webterm — CyberVPS Web Terminal CLI Wrapper
+set -euo pipefail
+
+CYBERVPS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/webterm.sh
+source "$CYBERVPS_DIR/lib/webterm.sh"
+
+handle_webterm_cli "$@"
