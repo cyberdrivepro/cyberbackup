@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# scripts/cybervps-job — CyberVPS Persistent Background Job Manager CLI Wrapper
+set -euo pipefail
+
+CYBERVPS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/jobs.sh
+source "$CYBERVPS_DIR/lib/jobs.sh"
+
+handle_job_cli "$@"
