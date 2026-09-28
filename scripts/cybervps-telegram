@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# scripts/cybervps-telegram — CyberVPS Telegram Remote Control CLI Wrapper
+set -euo pipefail
+
+CYBERVPS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/telegram.sh
+source "$CYBERVPS_DIR/lib/telegram.sh"
+
+handle_telegram_cli "$@"

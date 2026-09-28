@@ -29,6 +29,8 @@ source "$CYBERVPS_DIR/lib/persistence.sh"
 source "$CYBERVPS_DIR/lib/webterm.sh"
 # shellcheck source=lib/tunnel.sh
 source "$CYBERVPS_DIR/lib/tunnel.sh"
+# shellcheck source=lib/telegram.sh
+source "$CYBERVPS_DIR/lib/telegram.sh"
 
 # Ensure user PATH includes user-space locations
 export PATH="$HOME/.local/bin:$HOME/bin:$HOME/apps/micromamba/envs/hosting/bin:$HOME/.cargo/bin:$HOME/go/bin:$HOME/apps/go/bin:$PATH"
@@ -389,6 +391,10 @@ elif [ "${1:-}" = "tunnel" ]; then
     shift
     handle_tunnel_cli "$@"
     exit $?
+elif [ "${1:-}" = "telegram" ]; then
+    shift
+    handle_telegram_cli "$@"
+    exit $?
 elif [ "${1:-}" = "--menu" ] || [ -t 0 ]; then
     main_loop
 else
@@ -400,5 +406,6 @@ else
     echo "  cybervps persistence <command>"
     echo "  cybervps webterm <command>"
     echo "  cybervps tunnel <command>"
+    echo "  cybervps telegram <command>"
     exit 0
 fi
