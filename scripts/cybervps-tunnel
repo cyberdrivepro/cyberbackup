@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# scripts/cybervps-tunnel — CyberVPS Cloudflare Tunnel CLI Wrapper
+set -euo pipefail
+
+CYBERVPS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/tunnel.sh
+source "$CYBERVPS_DIR/lib/tunnel.sh"
+
+handle_tunnel_cli "$@"
