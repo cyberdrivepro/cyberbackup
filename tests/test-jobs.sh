@@ -5,15 +5,15 @@ set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$TEST_DIR/.." && pwd)"
 
-# shellcheck source=lib/jobs.sh
-source "$REPO_DIR/lib/jobs.sh"
-
 ORIG_PATH="$PATH"
 MOCK_ROOT="$(mktemp -d /tmp/cybervps-test-jobs-XXXXXX)"
 export HOME="$MOCK_ROOT"
 export XDG_STATE_HOME="$MOCK_ROOT/.local/state"
 export XDG_CONFIG_HOME="$MOCK_ROOT/.config"
 export PATH="$ORIG_PATH:$MOCK_ROOT/.local/bin"
+
+# shellcheck source=lib/jobs.sh
+source "$REPO_DIR/lib/jobs.sh"
 
 cleanup() {
     job_cancel "test-job-1" 2>/dev/null || true
@@ -41,8 +41,14 @@ echo "$status_out" | grep "RUNNING" >/dev/null
 echo "✔ PASS: Job listed and status retrieved"
 
 echo "=== Testing Job Logs ==="
-sleep 0.5
-logs_out="$(job_logs "test-job-1" 10)"
+logs_out=""
+for _ in {1..20}; do
+    logs_out="$(job_logs "test-job-1" 10)"
+    if echo "$logs_out" | grep "job start" >/dev/null; then
+        break
+    fi
+    sleep 0.1
+done
 echo "$logs_out" | grep "job start" >/dev/null
 echo "✔ PASS: Job logs retrieved"
 

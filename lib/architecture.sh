@@ -53,9 +53,9 @@ detect_libc_info() {
             libc_ver="$(echo "$ldd_out" | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1 || echo "")"
         elif [[ "$ldd_out" =~ musl ]]; then
             libc_type="musl"
-            libc_ver="$(echo "$ldd_out" | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")"
+            libc_ver="$(echo "$ldd_out" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")"
         fi
-    elif [ -f /lib/ld-musl-*.so.1 ] || [ -f /lib64/ld-musl-*.so.1 ]; then
+    elif compgen -G "/lib/ld-musl-*.so.1" >/dev/null || compgen -G "/lib64/ld-musl-*.so.1" >/dev/null; then
         libc_type="musl"
     fi
 

@@ -8,6 +8,14 @@ _CYBERVPS_DETECT_SH_LOADED=1
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "$LIB_DIR/common.sh"
+# shellcheck source=lib/privilege.sh
+source "$LIB_DIR/privilege.sh"
+# shellcheck source=lib/resources.sh
+source "$LIB_DIR/resources.sh"
+# shellcheck source=lib/capabilities.sh
+source "$LIB_DIR/capabilities.sh"
+# shellcheck source=lib/network.sh
+source "$LIB_DIR/network.sh"
 
 detect_environment() {
     # Dynamic identity
@@ -18,6 +26,10 @@ detect_environment() {
     CYBER_HOSTNAME="$(hostname 2>/dev/null || uname -n 2>/dev/null || echo "localhost")"
     CYBER_KERNEL="$(uname -s 2>/dev/null || echo "Linux")"
     CYBER_RAW_ARCH="$(uname -m 2>/dev/null || echo "x86_64")"
+
+    CYBER_PLATFORM="$CYBER_KERNEL"
+    case "$CYBER_KERNEL" in MINGW*|MSYS*|CYGWIN*) CYBER_PLATFORM=Windows ;; esac
+    detect_privilege
 
     # Architecture Normalization
     case "$CYBER_RAW_ARCH" in
@@ -51,10 +63,12 @@ detect_environment() {
 
     # OS & Distribution Detection (/etc/os-release)
     CYBER_DISTRO_ID="unknown"
-    CYBER_DISTRO_NAME="Linux"
+    CYBER_DISTRO_NAME="$CYBER_PLATFORM"
+    CYBER_DISTRO_PRETTY=""
     CYBER_DISTRO_VERSION="unknown"
 
-    if [ -f /etc/os-release ]; then
+    local os_release="${CYBERVPS_ROOT_VIEW:-}/etc/os-release"
+    if [ -f "$os_release" ]; then
         # Read without sourcing to prevent side effects
         while IFS='=' read -r k v; do
             v="${v%\"}"
@@ -65,67 +79,23 @@ detect_environment() {
                 VERSION_ID) CYBER_DISTRO_VERSION="$v" ;;
                 PRETTY_NAME) CYBER_DISTRO_PRETTY="$v" ;;
             esac
-        done < /etc/os-release
+        done < "$os_release"
     fi
     CYBER_DISTRO_PRETTY="${CYBER_DISTRO_PRETTY:-$CYBER_DISTRO_NAME $CYBER_DISTRO_VERSION}"
 
-    # C Runtime / Libc Detection
-    CYBER_LIBC="glibc"
-    CYBER_LIBC_VERSION="unknown"
-    if have_command ldd; then
-        local ldd_out
-        ldd_out="$(ldd --version 2>&1 | head -n 1 || true)"
-        if echo "$ldd_out" | grep -iq "musl"; then
-            CYBER_LIBC="musl"
-            CYBER_LIBC_VERSION="$(echo "$ldd_out" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "unknown")"
-        elif echo "$ldd_out" | grep -iqE "gnu|glibc"; then
-            CYBER_LIBC="glibc"
-            CYBER_LIBC_VERSION="$(echo "$ldd_out" | grep -oE '[0-9]+\.[0-9]+' | head -1 || echo "unknown")"
-        fi
-    elif have_command getconf; then
-        local gc
-        gc="$(getconf GNU_LIBC_VERSION 2>/dev/null || true)"
-        if [ -n "$gc" ]; then
-            CYBER_LIBC="glibc"
-            CYBER_LIBC_VERSION="$(echo "$gc" | awk '{print $NF}')"
-        fi
+    # Share architecture/libc parsing with backup compatibility checks.
+    CYBER_ARCH="$(normalize_arch "$CYBER_RAW_ARCH")"
+    local libc_info
+    libc_info="$(detect_libc_info)"
+    CYBER_LIBC="${libc_info%%:*}"
+    CYBER_LIBC_VERSION="${libc_info#*:}"
+    CYBER_LIBC_VERSION="${CYBER_LIBC_VERSION:-unknown}"
+    if [ "$CYBER_PLATFORM" != Linux ]; then
+        CYBER_MAMBA_ARCH=""
+        CYBER_GO_ARCH=""
     fi
-
-    # Hardware resources
-    CYBER_NPROC="$(nproc 2>/dev/null || grep -c '^processor' /proc/cpuinfo 2>/dev/null || echo 1)"
-    CYBER_RAM_TOTAL_MB="unknown"
-    CYBER_RAM_AVAIL_MB="unknown"
-    if [ -f /proc/meminfo ]; then
-        local mem_kb
-        mem_kb="$(grep -i 'MemTotal:' /proc/meminfo | awk '{print $2}')"
-        CYBER_RAM_TOTAL_MB="$((mem_kb / 1024))"
-        local avail_kb
-        avail_kb="$(grep -i 'MemAvailable:' /proc/meminfo | awk '{print $2}' || true)"
-        if [ -n "$avail_kb" ]; then
-            CYBER_RAM_AVAIL_MB="$((avail_kb / 1024))"
-        fi
-    fi
-
-    # Disk Space in HOME
-    CYBER_DISK_FREE_MB="unknown"
-    if have_command df; then
-        CYBER_DISK_FREE_MB="$(df -m "$CYBER_HOME" 2>/dev/null | tail -1 | awk '{print $4}' || echo "unknown")"
-    fi
-
-    # Detect Available Service Persistence Backends
-    CYBER_BACKENDS=()
-    if have_command systemctl && systemctl --user list-units >/dev/null 2>&1; then
-        CYBER_BACKENDS+=("systemd-user")
-    fi
-    if have_command tmux; then
-        CYBER_BACKENDS+=("tmux")
-    fi
-    if have_command screen; then
-        CYBER_BACKENDS+=("screen")
-    fi
-    if have_command nohup; then
-        CYBER_BACKENDS+=("nohup")
-    fi
+    detect_resources
+    detect_capabilities
 
     log_debug "Detected: user=$CYBER_USER arch=$CYBER_ARCH distro=$CYBER_DISTRO_ID libc=$CYBER_LIBC ($CYBER_LIBC_VERSION)"
 }
@@ -140,9 +110,11 @@ print_system_summary() {
     echo "OS / Distro:  $CYBER_DISTRO_PRETTY"
     echo "Architecture: $CYBER_ARCH (kernel: $CYBER_KERNEL)"
     echo "C Library:    $CYBER_LIBC $CYBER_LIBC_VERSION"
-    echo "CPUs:         $CYBER_NPROC cores"
-    echo "RAM:          ${CYBER_RAM_TOTAL_MB}MB total (~${CYBER_RAM_AVAIL_MB}MB available)"
-    echo "Disk:         ~${CYBER_DISK_FREE_MB}MB free in $CYBER_HOME"
+    echo "CPUs:         $CYBER_NPROC effective vCPU / $CYBER_HOST_NPROC host-visible threads"
+    echo "RAM:          ${CYBER_RAM_TOTAL_MB}MB effective (~${CYBER_RAM_AVAIL_MB}MB available); ${CYBER_HOST_RAM_TOTAL_MB}MB host-visible"
+    echo "Cgroups:      $CYBER_CGROUP_VERSION (resource source: $CYBER_RESOURCE_SOURCE)"
+    echo "Disk:         ~${CYBER_DISK_FREE_MB}MB free in $CYBER_HOME ($CYBER_DISK_FSTYPE; persistence UNKNOWN)"
+    print_capability_summary
     echo "Backends:     ${CYBER_BACKENDS[*]:-none}"
     echo "==============================="
 }

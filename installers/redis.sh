@@ -24,16 +24,16 @@ ensure_directory "$LOGS_DIR"
 
 log_header "Checking / Configuring Rootless Redis"
 
-# 1. Check if redis-server is available
-if ! have_command redis-server && [ ! -x "$USER_BIN_DIR/redis-server" ]; then
-    log_info "redis-server not found; installing via Micromamba conda-forge..."
-    bash "$SCRIPT_DIR/micromamba.sh" || true
-    if have_command micromamba || [ -x "$USER_BIN_DIR/micromamba" ]; then
-        MAMBA_BIN="$(command -v micromamba || echo "$USER_BIN_DIR/micromamba")"
-        MAMBA_ROOT_PREFIX="$USER_APPS_DIR/micromamba" "$MAMBA_BIN" install -y -n "${CYBERVPS_ENV_NAME:-hosting}" -c conda-forge redis || true
-    fi
+# Shared runtime acquisition: a missing optional binary is a real failure.
+# shellcheck source=lib/install.sh
+source "$SCRIPT_DIR/../lib/install.sh"
+install_resolve_mode "${CYBERVPS_INSTALL_MODE:-rootless}"
+ensure_user_paths
+install_component redis
+if [ -f "$CONFIG_DIR/redis.conf" ]; then
+    log_ok "Existing redis configuration preserved."
+    exit 0
 fi
-
 # 2. Allocate or read rootless Redis port
 redis_port="$(reserve_or_select_port "REDIS_PORT" 6380)"
 redis_conf="$CONFIG_DIR/redis.conf"

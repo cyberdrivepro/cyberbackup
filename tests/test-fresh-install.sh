@@ -1,75 +1,38 @@
 #!/usr/bin/env bash
-# tests/test-fresh-install.sh — Tests for CyberVPS fresh rebuild profiles & preflight check
-set -euo pipefail
-
-TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(cd "$TEST_DIR/.." && pwd)"
-
-# shellcheck source=lib/logging.sh
-source "$REPO_DIR/lib/logging.sh"
-
-TESTS_PASSED=0
-TESTS_FAILED=0
-
-assert_true() {
-    local msg="$1"
-    shift
-    if "$@"; then
-        log_ok "PASS: $msg"
-        TESTS_PASSED=$((TESTS_PASSED + 1))
-    else
-        log_error "FAIL: $msg"
-        TESTS_FAILED=$((TESTS_FAILED + 1))
-    fi
-}
-
-assert_contains() {
-    local haystack="$1"
-    local needle="$2"
-    local msg="$3"
-    if [[ "$haystack" == *"$needle"* ]]; then
-        log_ok "PASS: $msg"
-        TESTS_PASSED=$((TESTS_PASSED + 1))
-    else
-        log_error "FAIL: $msg (expected substring '$needle' in output)"
-        TESTS_FAILED=$((TESTS_FAILED + 1))
-    fi
-}
-
-log_header "Testing fresh-install.sh Profiles & Preflight Check"
-
-# Test 1: Help message
-help_out="$(bash "$REPO_DIR/fresh-install.sh" --help 2>&1)"
-assert_true "Help option exits with 0" test $? -eq 0
-assert_contains "$help_out" "--profile" "Help mentions --profile option"
-assert_contains "$help_out" "--dry-run" "Help mentions --dry-run option"
-
-# Test 2: Non-interactive dry-run defaults to hosting profile and displays preflight check
-dry_out="$(bash "$REPO_DIR/fresh-install.sh" --dry-run </dev/null 2>&1)"
-assert_true "Non-interactive dry-run succeeds" test $? -eq 0
-assert_contains "$dry_out" "PREFLIGHT ENVIRONMENT CHECK" "Output contains preflight header"
-assert_contains "$dry_out" "profile: hosting" "Dry-run defaults to hosting profile"
-assert_contains "$dry_out" "non-root user-space" "Preflight verifies non-root user-space"
-assert_contains "$dry_out" "NOT REQUIRED" "Preflight mentions system root not required"
-assert_contains "$dry_out" "NOT USED" "Preflight mentions system package manager not used"
-
-# Test 3: Explicit profile flag selection
-dev_out="$(bash "$REPO_DIR/fresh-install.sh" --dry-run --profile developer </dev/null 2>&1)"
-assert_true "Developer profile dry-run succeeds" test $? -eq 0
-assert_contains "$dev_out" "profile: developer" "Output shows developer profile in preflight"
-
-# Test 4: Interactive back option (selecting 'B' exits cleanly)
-back_out="$(printf "B\n" | CYBERVPS_INTERACTIVE=1 bash "$REPO_DIR/fresh-install.sh" 2>&1 || true)"
-assert_contains "$back_out" "Returned to dashboard" "Selecting 'B' returns cleanly to dashboard"
-
-# Test 5: Interactive profile selection via piped input
-pipe_choice_out="$(printf "1\nn\n" | CYBERVPS_INTERACTIVE=1 bash "$REPO_DIR/fresh-install.sh" 2>&1 || true)"
-assert_contains "$pipe_choice_out" "profile: minimal" "Interactive menu selects minimal profile"
-assert_contains "$pipe_choice_out" "Installation cancelled by user" "Cancellation via 'n' aborts cleanly"
-
-echo
-log_header "Test Summary: $TESTS_PASSED passed, $TESTS_FAILED failed"
-if [ "$TESTS_FAILED" -gt 0 ]; then
-    exit 1
-fi
-exit 0
+# CLI contracts: read-only planning, validation and unattended safety.
+set -Eeuo pipefail
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TEST_TMP="$(mktemp -d)"
+trap 'rm -rf "$TEST_TMP"' EXIT
+export HOME="$TEST_TMP/home"
+mkdir -p "$HOME"
+export CYBERVPS_READ_ONLY=1
+passed=0
+check() { if "$@"; then passed=$((passed + 1)); else printf 'FAIL: %s\n' "$*" >&2; exit 1; fi; }
+help="$(bash "$REPO_DIR/fresh-install.sh" --help)"
+check grep -q -- '--mode MODE' <<< "$help"
+check grep -q -- '--verify' <<< "$help"
+plan="$(bash "$REPO_DIR/fresh-install.sh" --dry-run </dev/null)"
+check grep -q 'Selected profile: hosting' <<< "$plan"
+check grep -q 'Install mode:' <<< "$plan"
+check test -z "$(find "$HOME" -mindepth 1 -print -quit)"
+plan="$(bash "$REPO_DIR/fresh-install.sh" --profile developer --mode rootless --dry-run)"
+check grep -q 'Install mode: rootless' <<< "$plan"
+check grep -q 'rust' <<< "$plan"
+for args in '--profile' '--mode' '--mode invalid --dry-run' '--profile nonsense --dry-run' '--components bad --profile custom --dry-run'; do
+    rc=0
+    # Deliberate fixture word splitting for fixed argument cases, no external input.
+    # shellcheck disable=SC2086
+    bash "$REPO_DIR/fresh-install.sh" $args >/dev/null 2>&1 || rc=$?
+    check test "$rc" -eq 2
+done
+back="$(printf 'B\n' | CYBERVPS_INTERACTIVE=1 bash "$REPO_DIR/fresh-install.sh" 2>&1)"
+check grep -q 'Returned to dashboard' <<< "$back"
+cancel="$(printf '1\n1\nn\n' | CYBERVPS_INTERACTIVE=1 bash "$REPO_DIR/fresh-install.sh" 2>&1)"
+check grep -q 'Selected profile: minimal' <<< "$cancel"
+check grep -q 'Installation cancelled' <<< "$cancel"
+rc=0
+bash "$REPO_DIR/fresh-install.sh" --profile minimal --mode rootless </dev/null >/dev/null 2>&1 || rc=$?
+check test "$rc" -eq 2
+check test -z "$(find "$HOME" -mindepth 1 -print -quit)"
+printf 'Fresh install CLI: %s passed, 0 failed.\n' "$passed"

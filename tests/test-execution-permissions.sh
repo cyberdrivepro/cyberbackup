@@ -144,7 +144,7 @@ chmod -x "$PROJECT_ROOT"/fresh-install.sh 2>/dev/null || true
 MENU_TEST_OUTPUT=$(printf "2\n\n0\n" | bash "$PROJECT_ROOT/cybervps.sh" --menu 2>&1 || true)
 chmod +x "$PROJECT_ROOT"/fresh-install.sh 2>/dev/null || true
 
-assert_true "Menu survived non-executable child script and prompted gracefully" grep -q "Action: Fresh Rootless Rebuild" <<< "$MENU_TEST_OUTPUT"
+assert_true "Menu survived non-executable child script and prompted gracefully" grep -q "Action: Install / Rebuild" <<< "$MENU_TEST_OUTPUT"
 assert_true "Menu exited cleanly with 0 on user command" grep -q "Exiting CyberVPS. Goodbye!" <<< "$MENU_TEST_OUTPUT"
 
 echo ""

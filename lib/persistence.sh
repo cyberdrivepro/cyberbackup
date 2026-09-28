@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # lib/persistence.sh — CyberVPS Startup & Recovery Engine
-# Detects, configures, and manages multi-tier rootless persistence:
-# Tier 1: True Boot Autostart (systemd --user with lingering, or cron @reboot)
+# Detects and configures current-user recovery without provider durability claims:
+# Tier 1: Boot capability (operational systemd user manager plus lingering)
 # Tier 2: Login-Triggered Recovery (idempotent marked shell profile block)
 # Tier 3: Session Persistence (tmux / screen / nohup surviving SSH disconnect)
 # Clearly labels each mode without claiming boot persistence when only login recovery exists.
@@ -31,7 +31,7 @@ persistence_init_dirs() {
 
 # Check if systemd --user is functional without root
 can_use_user_systemd() {
-    have_command systemctl && systemctl --user list-units >/dev/null 2>&1
+    cyber_systemd_user_available
 }
 
 # Check if loginctl lingering is enabled for the current user
@@ -49,12 +49,20 @@ is_user_lingering_active() {
 
 # Check if cron @reboot is supported and available
 can_use_user_cron() {
-    if have_command crontab; then
-        # Check if crontab can be read or edited without root
-        crontab -l >/dev/null 2>&1 || [ $? -eq 1 ] # exit 1 usually means no crontab for user, which is ok
-    else
-        return 1
-    fi
+    have_command crontab || return 1
+    local output rc=0
+    local LC_ALL=C
+    output="$(crontab -l 2>&1)" || rc=$?
+    [ "$rc" -eq 0 ] && return 0
+    [ "$rc" -eq 1 ] || return 1
+    case "$output" in
+        *'no crontab for'*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+persistence_cron_running() {
+    have_command pgrep && { pgrep -x cron >/dev/null 2>&1 || pgrep -x crond >/dev/null 2>&1; }
 }
 
 # Detect persistence capabilities across tiers
@@ -67,26 +75,31 @@ persistence_detect_modes() {
     # 1. Systemd user linger
     if can_use_user_systemd; then
         if is_user_lingering_active; then
-            boot_mode="AVAILABLE (systemd --user with lingering)"
-            best_tier="TRUE BOOT AUTOSTART"
+            boot_mode="AVAILABLE (systemd --user with lingering; enabled units required)"
+            best_tier="BOOT AUTOSTART CAPABLE"
         else
             boot_mode="PARTIAL (systemd --user present, but user lingering not enabled by host)"
         fi
     elif can_use_user_cron; then
-        boot_mode="AVAILABLE (cron @reboot)"
-        best_tier="TRUE BOOT AUTOSTART"
+        if persistence_cron_running; then
+            boot_mode="PARTIAL (cron running; @reboot support and provider restart behavior must be verified)"
+        else
+            boot_mode="UNVERIFIED (crontab writable; cron daemon not confirmed)"
+        fi
     fi
 
     # 2. Session persistence
     local session_backend
     session_backend="$(session_get_backend)"
-    session_mode="AVAILABLE ($session_backend)"
+    session_mode="AVAILABLE ($session_backend; only while the node remains running)"
+    [ "$session_backend" = none ] && session_mode="UNAVAILABLE"
 
     echo "=== CyberVPS Persistence Capability Matrix ==="
-    echo "  • True Boot Autostart  : $boot_mode"
+    echo "  • Boot Autostart       : $boot_mode"
     echo "  • Login Recovery       : $login_mode (~/.profile / ~/.bashrc)"
     echo "  • Session Persistence  : $session_mode"
     echo "  • Recommended Tier     : $best_tier"
+    echo "  • Provider Persistence : UNKNOWN (provider stop/delete overrides local recovery)"
     echo
 }
 
@@ -100,15 +113,22 @@ persistence_setup() {
     # Try setting up login recovery as baseline
     setup_login_recovery
 
-    # Check if cron @reboot is usable
+    # Register only after verifying crontab access; report failures honestly.
     if can_use_user_cron; then
-        local current_cron
+        local current_cron escaped_helper
         current_cron="$(crontab -l 2>/dev/null || true)"
-        if ! echo "$current_cron" | grep -q "cybervps-start"; then
-            local new_cron
-            new_cron="$(printf "%s\n@reboot %s --background >/dev/null 2>&1\n" "$current_cron" "$helper_bin" | sed '/^$/N;/^\n$/D')"
-            echo "$new_cron" | crontab - 2>/dev/null || true
-            log_ok "Registered cron @reboot hook for CyberVPS service autostart."
+        if ! printf '%s\n' "$current_cron" | grep -q '# CYBERVPS MANAGED RECOVERY$'; then
+            if [[ "$helper_bin" = *$'\n'* || "$helper_bin" = *'%'* ]]; then
+                log_warn "Cron recovery skipped: HOME contains characters unsupported by crontab."
+            else
+                printf -v escaped_helper '%q' "$helper_bin"
+                if printf '%s\n@reboot %s --background >/dev/null 2>&1 # CYBERVPS MANAGED RECOVERY\n' "$current_cron" "$escaped_helper" | crontab -; then
+                    log_ok "Registered cron recovery hook; provider restart support remains unverified."
+                else
+                    log_error "Could not register cron recovery hook; login recovery remains configured."
+                    return 1
+                fi
+            fi
         fi
     fi
 
@@ -123,13 +143,13 @@ persistence_disable() {
     if have_command crontab; then
         local current_cron
         current_cron="$(crontab -l 2>/dev/null || true)"
-        if echo "$current_cron" | grep -q "cybervps-start"; then
+        if echo "$current_cron" | grep -q '# CYBERVPS MANAGED RECOVERY$'; then
             local clean_cron
-            clean_cron="$(echo "$current_cron" | grep -v "cybervps-start" || true)"
+            clean_cron="$(echo "$current_cron" | grep -v '# CYBERVPS MANAGED RECOVERY$' || true)"
             if [ -n "$clean_cron" ]; then
-                echo "$clean_cron" | crontab - 2>/dev/null || true
+                echo "$clean_cron" | crontab - || return 1
             else
-                crontab -r 2>/dev/null || true
+                crontab -r || return 1
             fi
             log_ok "Removed cron @reboot hook."
         fi
@@ -147,7 +167,7 @@ persistence_recover() {
 
     echo "[$now] Starting CyberVPS service recovery..." >> "$log_file"
 
-    local restored_count=0
+    local restored_count=0 failed_count=0
     service_init_dirs
     for cfg in "$SERVICES_CONFIG_DIR"/*.json; do
         [ -f "$cfg" ] || continue
@@ -157,13 +177,21 @@ persistence_recover() {
 
         if [ "$s_enabled" = "true" ]; then
             if ! is_service_running "$s_name"; then
-                service_start "$s_name" >> "$log_file" 2>&1 || true
-                restored_count=$((restored_count + 1))
+                if service_start "$s_name" >> "$log_file" 2>&1; then
+                    restored_count=$((restored_count + 1))
+                else
+                    failed_count=$((failed_count + 1))
+                    log_warn "Service recovery failed for $s_name; see $log_file"
+                fi
             fi
         fi
     done
 
     echo "[$now] CyberVPS recovery completed: restored $restored_count service(s)." >> "$log_file"
+    if [ "$failed_count" -gt 0 ]; then
+        log_error "Recovery incomplete: $restored_count restored, $failed_count failed. Log: $log_file"
+        return 1
+    fi
     log_ok "CyberVPS recovery completed: restored $restored_count service(s)."
 }
 
@@ -176,7 +204,7 @@ handle_persistence_cli() {
         detect|matrix)
             persistence_detect_modes
             ;;
-        setup|enable)
+        setup|install|enable)
             persistence_setup
             ;;
         disable|remove)

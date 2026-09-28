@@ -26,16 +26,16 @@ ensure_directory "$TMP_NGINX"
 
 log_header "Checking / Configuring Rootless Nginx"
 
-# 1. Check if nginx binary is available
-if ! have_command nginx && [ ! -x "$USER_BIN_DIR/nginx" ]; then
-    log_info "nginx not found; installing via Micromamba conda-forge..."
-    bash "$SCRIPT_DIR/micromamba.sh" || true
-    if have_command micromamba || [ -x "$USER_BIN_DIR/micromamba" ]; then
-        MAMBA_BIN="$(command -v micromamba || echo "$USER_BIN_DIR/micromamba")"
-        MAMBA_ROOT_PREFIX="$USER_APPS_DIR/micromamba" "$MAMBA_BIN" install -y -n "${CYBERVPS_ENV_NAME:-hosting}" -c conda-forge nginx || true
-    fi
+# Shared runtime acquisition: a missing optional binary is a real failure.
+# shellcheck source=lib/install.sh
+source "$SCRIPT_DIR/../lib/install.sh"
+install_resolve_mode "${CYBERVPS_INSTALL_MODE:-rootless}"
+ensure_user_paths
+install_component nginx
+if [ -f "$CONFIG_DIR/nginx.conf" ]; then
+    log_ok "Existing nginx configuration preserved."
+    exit 0
 fi
-
 # 2. Allocate or read rootless ports
 http_port="$(reserve_or_select_port "HTTP_PORT" 8080)"
 nginx_conf="$CONFIG_DIR/nginx.conf"
@@ -52,7 +52,7 @@ events {
 }
 
 http {
-    include mime.types;
+    # Built-in fallback MIME types; no dependency on a system mime.types path.
     default_type application/octet-stream;
     access_log $LOGS_DIR/nginx_access.log;
     sendfile on;

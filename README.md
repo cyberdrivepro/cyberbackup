@@ -15,6 +15,11 @@ CyberVPS empowers developers and sysadmins to operate, supervise, persist, backu
 ```bash
 git clone https://github.com/cyberdrivepro/cyberbackup.git
 cd cyberbackup
+
+# One-command Zero-Touch Setup (Interactive Level Selector: Core, Hosting, Dev, Ultra)
+bash cybervps.sh auto
+
+# Or enter the full Interactive Control Center:
 bash cybervps.sh
 ```
 
@@ -44,6 +49,8 @@ Upon launch, CyberVPS inspects the host and renders the V4 interactive control c
 │  [7] Service Manager (Persistent 24/7 Daemons)                              │
 │  [8] Persistent Terminals (Session Manager)                                 │
 │  [9] Authenticated Web Terminal (Browser SSH)                               │
+│  [A] CyberVPS Ultra Auto Provisioning (Zero-Touch)                          │
+│  [S] Virtual Root Shell (root@cybervps:~#)                                  │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 ╭─ REMOTE CONTROL & ACCESS ────────────────────────────────────────────────────╮
 │  [10] Telegram Bot Remote Control & Heartbeat                               │
@@ -65,16 +72,18 @@ Upon launch, CyberVPS inspects the host and renders the V4 interactive control c
 
 ## 🌟 Key Capabilities
 
-1. **Zero Root / Sudo Required:** Runs completely inside user-space. Zero `sudo`, `su`, `apt`, `dnf`, or root daemon modifications.
-2. **Persistent 24/7 Hosting:** Operates daemons independently of interactive SSH sessions and laptop power state.
-3. **Persistent Terminal Sessions:** Multiplexed tmux/screen workspaces that survive connection drops, disconnects, and terminal window closures.
-4. **Authenticated Browser Web Terminal:** Powered by rootless `ttyd`, bound strictly to `127.0.0.1` with mandatory credentials and tunnel support.
-5. **Telegram Remote Control & Heartbeat:** Pure Python 3 standard library daemon with interactive buttons, secret redaction, audit logging, and automated 7-minute liveness heartbeats.
-6. **Encrypted Cloudflare Tunnels:** Quick and named tunnels via `cloudflared` to securely expose local web terminals without open firewall ports or public IPv4 addresses.
-7. **Background Jobs & Service Watchdog:** Long-running task detachment via `nohup` with state tracking and an automated service watchdog with exponential crash backoff.
-8. **Disaster Recovery & Migration:** Rebuilds entire runtime environments (Python, Node, Go, Rust, PM2, Cloudflared) and migrates setups across VPS providers.
-9. **Dynamic Port Allocator:** Discovers free unprivileged localhost ports (`>= 1024`), ensuring zero collisions on multi-user VPS hosts.
-10. **Strict Credential Security:** All tokens, keys, and passwords stored in `~/.config/cybervps/` (mode 0600) strictly outside Git, validated by an automated pre-commit secret scanner.
+1. **CyberVPS Ultra Auto (Zero-Touch):** Autonomous discovery of CPU quota, cgroup RAM limits, network, platform, and privilege. One-click setup for 4 tiers: Core, Universal Hosting, Developer Suite, or Ultra Full.
+2. **PRoot Virtual Root Runtime:** Seamless Debian/Ubuntu virtual root (`root@cybervps:~#`) for unprivileged containers and rootless accounts. Run `apt-get install` without root!
+3. **Zero Root / Sudo Required:** Full user-space portability. Can run under root, container root, sudo, or completely rootless.
+4. **Persistent 24/7 Hosting:** Operates daemons independently of interactive SSH sessions and laptop power state.
+5. **Persistent Terminal Sessions:** Multiplexed tmux/screen workspaces that survive connection drops, disconnects, and terminal window closures.
+6. **Authenticated Browser Web Terminal:** Powered by rootless `ttyd`, bound strictly to `127.0.0.1` with mandatory credentials and tunnel support.
+7. **Telegram Remote Control & Heartbeat:** Pure Python 3 standard library daemon with interactive buttons, secret redaction, audit logging, and automated 7-minute liveness heartbeats.
+8. **Encrypted Cloudflare Tunnels:** Quick and named tunnels via `cloudflared` to securely expose local web terminals without open firewall ports or public IPv4 addresses.
+9. **Background Jobs & Service Watchdog:** Long-running task detachment via `nohup` with state tracking and an automated service watchdog with exponential crash backoff.
+10. **Disaster Recovery & Migration:** Rebuilds entire runtime environments (Python, Node, Go, Rust, PM2, Cloudflared) and migrates setups across VPS providers.
+11. **Dynamic Port Allocator:** Discovers free unprivileged localhost ports (`>= 1024`), ensuring zero collisions on multi-user VPS hosts.
+12. **Strict Credential Security:** All tokens, keys, and passwords stored in `~/.config/cybervps/` (mode 0600) strictly outside Git, validated by an automated pre-commit secret scanner.
 
 ---
 

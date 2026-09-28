@@ -38,6 +38,7 @@ log_file="$TUNNEL_LOGS_DIR/tunnel_test-mock-tunnel.log"
 sleep 60 > "$log_file" 2>&1 &
 mock_pid=$!
 echo "$mock_pid" > "$pid_file"
+process_record "$mock_pid" "$pid_file"
 
 cat > "$meta_file" <<EOF
 {

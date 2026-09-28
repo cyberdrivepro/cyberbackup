@@ -10,45 +10,15 @@ LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "$LIB_DIR/common.sh"
 
-PORTS_CONFIG_FILE="${HOME}/.config/cybervps/ports.env"
+PORTS_CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/cybervps/ports.env"
 
 # Check whether a TCP port is in use
 is_port_in_use() {
-    local port="$1"
-    local host="${2:-127.0.0.1}"
-
-    # Try ss first
-    if have_command ss; then
-        if ss -tln | grep -qE "(:${port}[[:space:]]|:${port}$)"; then
-            return 0 # in use
-        fi
-    fi
-
-    # Try netstat if available
-    if have_command netstat; then
-        if netstat -tln 2>/dev/null | grep -qE "(:${port}[[:space:]]|:${port}$)"; then
-            return 0 # in use
-        fi
-    fi
-
-    # Bash /dev/tcp test (connecting to active listening port succeeds)
-    if (exec 3<>"/dev/tcp/${host}/${port}") 2>/dev/null; then
-        exec 3>&- 2>/dev/null || true
-        return 0 # in use
-    fi
-
-    # Python test if available
-    if have_command python3; then
-        if python3 -c "import socket; s = socket.socket(); s.connect(('${host}', ${port})); s.close()" 2>/dev/null; then
-            return 0 # in use
-        fi
-    fi
-
-    return 1 # free
+    ! is_port_free "$@"
 }
 
 is_port_free() {
-    ! is_port_in_use "$@"
+    python3 "$CYBERVPS_ROOT/scripts/ports_control.py" probe "$1" --host "${2:-127.0.0.1}"
 }
 
 # Find a free unprivileged port (range 1024-65535)
@@ -89,34 +59,7 @@ find_free_port() {
 # Allocate or reuse a port for a logical service
 # Example: reserve_or_select_port "WEB_PORT" 8080
 reserve_or_select_port() {
-    local service_key="$1"
-    local default_port="$2"
-
-    ensure_directory "$(dirname "$PORTS_CONFIG_FILE")" 0700
-    touch "$PORTS_CONFIG_FILE"
-
-    # Check if already defined in ports.env
-    local current_port
-    current_port="$(grep -E "^${service_key}=" "$PORTS_CONFIG_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d ' ' || true)"
-
-    local selected_port=""
-    if [ -n "$current_port" ] && is_port_free "$current_port"; then
-        selected_port="$current_port"
-        log_debug "Reusing reserved port for ${service_key}: $selected_port"
-    else
-        local candidate="${current_port:-$default_port}"
-        selected_port="$(find_free_port "$candidate")"
-        log_info "Allocated port for ${service_key}: $selected_port (candidate was $candidate)"
-
-        # Update ports.env idempotently
-        if grep -qE "^${service_key}=" "$PORTS_CONFIG_FILE" 2>/dev/null; then
-            sed -i "s/^${service_key}=.*/${service_key}=${selected_port}/" "$PORTS_CONFIG_FILE"
-        else
-            printf '%s=%s\n' "$service_key" "$selected_port" >> "$PORTS_CONFIG_FILE"
-        fi
-    fi
-
-    echo "$selected_port"
+    python3 "$CYBERVPS_ROOT/scripts/ports_control.py" reserve "$2" --key "$1" --file "$PORTS_CONFIG_FILE"
 }
 
 # Load all configured ports into current environment

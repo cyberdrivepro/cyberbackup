@@ -1,164 +1,131 @@
 #!/usr/bin/env bash
-# fresh-install.sh — Fresh user-space rebuild from zero for CyberVPS
-# Strictly rootless. Works after near-total $HOME loss.
-set -euo pipefail
-
+# Capability-driven, non-destructive installation and repair entrypoint.
+set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/common.sh
-source "$SCRIPT_DIR/lib/common.sh"
-# shellcheck source=lib/detect.sh
-source "$SCRIPT_DIR/lib/detect.sh"
-# shellcheck source=lib/ui.sh
-source "$SCRIPT_DIR/lib/ui.sh"
-# shellcheck source=lib/execution.sh
-source "$SCRIPT_DIR/lib/execution.sh"
-# shellcheck source=lib/lock.sh
-source "$SCRIPT_DIR/lib/lock.sh"
-# shellcheck source=lib/install.sh
-source "$SCRIPT_DIR/lib/install.sh"
-# shellcheck source=lib/ports.sh
-source "$SCRIPT_DIR/lib/ports.sh"
-# shellcheck source=lib/services.sh
-source "$SCRIPT_DIR/lib/services.sh"
-# shellcheck source=lib/verify.sh
-source "$SCRIPT_DIR/lib/verify.sh"
-
 DRY_RUN=0
+VERIFY_ONLY=0
 ASSUME_YES=0
 PROFILE=""
-
+MODE=auto
+MODE_GIVEN=0
 show_usage() {
-    cat << EOF
-CyberVPS Fresh Rebuild CLI
-Usage: $(basename "$0") [options]
-
-Options:
-  --profile <name>        Installation profile: minimal, hosting, developer, full
-  -y, --yes, --unattended Skip interactive confirmation prompt
-  --dry-run               Simulate installation without making system changes
-  -h, --help              Show this help message
+    cat <<'EOF'
+CyberVPS Install / Repair
+Usage: bash fresh-install.sh [options]
+  --profile NAME       minimal, hosting, developer, full, desktop,
+                       cyberroot, cybervm, agent_only, custom
+  --mode MODE          auto, root, rootless, hybrid (default: auto)
+  --components LIST    Custom comma-separated component names
+  --repair             Reuse installed tools; repair missing components
+  --verify             Check the selected profile; make no changes
+  --dry-run            Print the plan; make no changes or downloads
+  --yes                Required for unattended installation
+  --help               Show this help
+Exit: 0 success, 2 usage, 3 capability, 7 dependency, 8 operation,
+      9 verification, 10 partial installation (optional failures).
 EOF
 }
-
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --profile)
-            PROFILE="${2:-}"
-            shift 2
-            ;;
-        -y|--yes|--unattended)
-            ASSUME_YES=1
-            shift
-            ;;
-        --dry-run)
-            DRY_RUN=1
-            shift
-            ;;
-        -h|--help)
-            show_usage
-            exit 0
-            ;;
-        *)
-            log_error "Unknown option: $1"
-            show_usage
-            exit 1
-            ;;
+        --profile|--mode|--components)
+            [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != --* ]] || { show_usage >&2; exit 2; }
+            case "$1" in
+                --profile) PROFILE="${2,,}" ;;
+                --mode) MODE="${2,,}"; MODE_GIVEN=1 ;;
+                --components) export CYBERVPS_INSTALL_COMPONENTS="$2" ;;
+            esac
+            shift 2 ;;
+        --dry-run) DRY_RUN=1; shift ;;
+        --verify|--verify-only) VERIFY_ONLY=1; shift ;;
+        --repair) shift ;; # Component installation is already idempotent.
+        --yes|-y|--unattended) ASSUME_YES=1; shift ;;
+        --help|-h) show_usage; exit 0 ;;
+        *) printf 'Unknown option: %s\n' "$1" >&2; show_usage >&2; exit 2 ;;
     esac
 done
+if [ "$DRY_RUN" -eq 1 ] || [ "$VERIFY_ONLY" -eq 1 ]; then export CYBERVPS_READ_ONLY=1; fi
+# shellcheck source=lib/install.sh
+source "$SCRIPT_DIR/lib/install.sh"
+# shellcheck source=lib/ui.sh
+source "$SCRIPT_DIR/lib/ui.sh"
 
-# Interactive Profile Selection if not passed via CLI
-if [ -z "$PROFILE" ]; then
-    if [ -t 0 ] || [ -n "${CYBERVPS_INTERACTIVE:-}" ]; then
-        echo
-        ui_menu_section "SELECT INSTALLATION PROFILE" \
-            "[1] Minimal    (Core user-space layout, portable tools, recovery)" \
-            "[2] Hosting    (Python 3.12, Node.js 22, web & proxy tooling) [Default]" \
-            "[3] Developer  (Hosting stack + Go, Rust, build toolchains)" \
-            "[4] Full       (All supported stacks, runtimes & services)" \
-            "[B] Back to Dashboard"
-        echo
-        choice=""
-        if ! read -rp "Select profile [1-4, B]: " choice; then
-            choice="2"
-        fi
-        case "$choice" in
-            1) PROFILE="minimal" ;;
-            2|"") PROFILE="hosting" ;;
-            3) PROFILE="developer" ;;
-            4) PROFILE="full" ;;
-            [bB]*)
-                log_info "Returned to dashboard."
-                exit 0
-                ;;
-            *)
-                log_warn "Invalid selection '$choice', defaulting to hosting."
-                PROFILE="hosting"
-                ;;
+if { [ -t 0 ] || [ -n "${CYBERVPS_INTERACTIVE:-}" ]; } && [ -z "$PROFILE" ]; then
+    if [ "$MODE_GIVEN" -eq 0 ] && [ "$DRY_RUN" -eq 0 ] && [ "$VERIFY_ONLY" -eq 0 ]; then
+        ui_menu_section 'INSTALL / REBUILD' \
+            '[1] Automatic / Recommended' '[2] Root / System Install' \
+            '[3] Rootless Portable Install' '[4] Hybrid Install' \
+            '[5] Repair Existing Install' '[6] Verify Only' '[7] Dry Run' '[0] Back'
+        read -r -p 'Select action [1-7, 0]: ' action || exit 0
+        case "$action" in
+            1|'') MODE=auto ;; 2) MODE=root ;; 3) MODE=rootless ;; 4) MODE=hybrid ;;
+            5) MODE=auto ;; 6) VERIFY_ONLY=1; export CYBERVPS_READ_ONLY=1 ;;
+            7) DRY_RUN=1; export CYBERVPS_READ_ONLY=1 ;;
+            0|[bB]*) log_info 'Returned to dashboard.'; exit 0 ;;
+            *) log_error 'Invalid action.'; exit 2 ;;
         esac
-    else
-        PROFILE="hosting"
     fi
+    ui_menu_section 'SELECT INSTALLATION PROFILE' \
+        '[1] Minimal' '[2] Hosting [Default]' '[3] Developer' '[4] Full' \
+        '[5] Desktop (opt-in)' '[6] CyberRoot' '[7] CyberVM' '[8] Agent Only' \
+        '[9] Custom' '[B] Back to Dashboard'
+    read -r -p 'Select profile [1-9, B]: ' choice || exit 0
+    case "$choice" in
+        1) PROFILE=minimal ;; 2|'') PROFILE=hosting ;; 3) PROFILE=developer ;; 4) PROFILE=full ;;
+        5) PROFILE=desktop ;; 6) PROFILE=cyberroot ;; 7) PROFILE=cybervm ;; 8) PROFILE=agent_only ;;
+        9) PROFILE=custom
+           printf 'Components: python,node,sqlite,build,go,rust,pm2,pnpm,nginx,redis,cloudflared,ttyd,micromamba,desktop,cyberroot,cybervm,agent\n'
+           read -r -p 'Comma-separated components: ' CYBERVPS_INSTALL_COMPONENTS || exit 0
+           export CYBERVPS_INSTALL_COMPONENTS ;;
+        [bB]*) log_info 'Returned to dashboard.'; exit 0 ;;
+        *) log_error 'Invalid profile.'; exit 2 ;;
+    esac
 fi
-
-# Preflight Environment Inspection Box
-echo
-ui_preflight_box "$PROFILE"
-echo
-
-# Interactive confirmation prompt
-if [ "$ASSUME_YES" -eq 0 ] && [ "$DRY_RUN" -eq 0 ]; then
-    if [ -t 0 ] || [ -n "${CYBERVPS_INTERACTIVE:-}" ]; then
-        confirm=""
-        if read -rp "Proceed with installation under profile '${PROFILE}'? [Y/n]: " confirm; then
-            if [[ "$confirm" =~ ^[nN] ]]; then
-                log_info "Installation cancelled by user."
-                exit 0
-            fi
-        fi
-        echo
-    fi
-fi
-
-acquire_lock "fresh-install" || exit 1
-trap 'release_lock' EXIT
-
+PROFILE="${PROFILE:-hosting}"
+install_profile_components "$PROFILE"
+install_resolve_mode "$MODE"
+printf '\nSelected profile: %s\n' "$PROFILE"
 if [ "$DRY_RUN" -eq 1 ]; then
-    log_header "DRY-RUN FRESH INSTALL PLAN (${PROFILE})"
-    log_info "1. Would create standard directories in $CYBER_HOME (bin, apps, config, services, logs, etc.)"
-    log_info "2. Would install architecture-compatible Micromamba for $CYBER_ARCH"
-    log_info "3. Would deploy selected profile components: $PROFILE"
-    log_info "4. Would allocate collision-free unprivileged ports in ~/.config/cybervps/ports.env"
-    log_info "5. Would install CyberVPS CLI helpers (cybervps-*) in ~/bin"
-    log_info "6. Would configure login-triggered recovery in ~/.bashrc"
-    log_info "7. Would run system health verification"
+    log_header 'DRY-RUN INSTALL PLAN'
+    install_profile_plan
     exit 0
 fi
-
-# 1. Ensure user-space directory tree
-log_header "Creating User-Space Directory Layout"
-for dir in bin apps config services logs projects examples shared run backups downloads tmp; do
-    ensure_directory "$CYBER_HOME/$dir" 0755
+if [ "$VERIFY_ONLY" -eq 1 ]; then
+    install_profile_verify
+    exit $?
+fi
+ui_preflight_box "$PROFILE"
+install_profile_plan
+if [ "$ASSUME_YES" -eq 0 ]; then
+    if [ -t 0 ] || [ -n "${CYBERVPS_INTERACTIVE:-}" ]; then
+        read -r -p "Proceed with profile '$PROFILE' in '$CYBERVPS_INSTALL_MODE' mode? [y/N]: " confirm || exit 0
+        [[ "$confirm" =~ ^[yY]([eE][sS])?$ ]] || { log_info 'Installation cancelled by user.'; exit 0; }
+    else
+        log_error 'Unattended installation requires --yes. Use --dry-run to inspect the plan.'
+        exit 2
+    fi
+fi
+# Existing tools need only state space; missing stacks get a conservative disk guard.
+required_mb=64
+for component in "${INSTALL_COMPONENTS[@]}"; do
+    if ! install_component_ready "$component"; then
+        case "$PROFILE" in minimal|agent_only) required_mb=256 ;; hosting|cybervm|cyberroot) required_mb=1024 ;; *) required_mb=3072 ;; esac
+        break
+    fi
 done
-log_ok "Directory structure established"
-
-# 2. Deploy selected profile components
-install_profile "$PROFILE"
-
-# 3. Dynamic Port Allocations
-log_header "Configuring Default Service Ports"
-WEB_P="$(reserve_or_select_port "WEB_PORT" 8080)"
-PROXY_P="$(reserve_or_select_port "WEB_PROXY_PORT" 8081)"
-REDIS_P="$(reserve_or_select_port "REDIS_PORT" 6380)"
-log_ok "Allocated WEB_PORT=$WEB_P, WEB_PROXY_PORT=$PROXY_P, REDIS_PORT=$REDIS_P"
-
-# 4. Service CLI Helpers & Login Recovery
-install_service_cli_helpers
-setup_login_recovery
-
-# 5. Verification
-log_header "Running Post-Rebuild Verification"
-run_cybervps_verification 0
-
-log_header "FRESH REBUILD COMPLETED"
-log_ok "CyberVPS user-space hosting toolkit is ready (${PROFILE} profile)."
-exit 0
+if [[ "${CYBER_DISK_FREE_MB:-unknown}" =~ ^[0-9]+$ ]] && [ "$CYBER_DISK_FREE_MB" -lt "$required_mb" ]; then
+    log_error "Insufficient writable space: ${CYBER_DISK_FREE_MB} MiB available; estimated ${required_mb} MiB required."
+    exit 3
+fi
+acquire_lock fresh-install || exit 8
+trap 'release_lock' EXIT
+rc=0
+install_profile "$PROFILE" || rc=$?
+# Preserve legacy helper paths and login recovery. No services are started here.
+if [ "$rc" -eq 0 ] || [ "$rc" -eq 10 ]; then
+    # shellcheck source=lib/services.sh
+    source "$SCRIPT_DIR/lib/services.sh"
+    install_service_cli_helpers || exit 8
+    setup_login_recovery || exit 8
+    log_info 'Installation finished. Login recovery depends on a login; provider shutdown still stops services.'
+fi
+exit "$rc"

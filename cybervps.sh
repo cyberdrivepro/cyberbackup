@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cybervps.sh — CyberVPS Rootless Cloud Control Center (UI V3)
+# cybervps.sh — CyberVPS Infrastructure Control Center (UI V3)
 # Interactive terminal dashboard with resilient error boundary, pure ANSI/UTF-8 styling,
 # centralized Bash execution dispatcher, and self-repair capabilities.
 set -uo pipefail
@@ -33,6 +33,11 @@ source "$CYBERVPS_DIR/lib/tunnel.sh"
 source "$CYBERVPS_DIR/lib/telegram.sh"
 # shellcheck source=lib/jobs.sh
 source "$CYBERVPS_DIR/lib/jobs.sh"
+# shellcheck source=lib/proot.sh
+source "$CYBERVPS_DIR/lib/proot.sh"
+# shellcheck source=lib/auto.sh
+source "$CYBERVPS_DIR/lib/auto.sh"
+source "$CYBERVPS_DIR/lib/cli.sh"
 
 # Ensure user PATH includes user-space locations
 export PATH="$HOME/.local/bin:$HOME/bin:$HOME/apps/micromamba/envs/hosting/bin:$HOME/.cargo/bin:$HOME/go/bin:$HOME/apps/go/bin:$PATH"
@@ -53,18 +58,12 @@ run_self_repair() {
     ensure_directory "${HOME}/.local/state/cybervps/logs" 0755
     echo -e "${C_BGREEN}OK${C_RESET}"
 
-    # 2. Repair repository file permissions for user-owned files
-    echo -n "• Checking repository file permissions... "
-    local rep_count=0
-    while IFS= read -r f; do
-        [ -f "$f" ] || continue
-        if [ -O "$f" ]; then
-            chmod u+r "$f" 2>/dev/null || true
-            [[ "$f" == *.sh ]] && chmod u+x "$f" 2>/dev/null || true
-            rep_count=$((rep_count + 1))
+    # 2. Entrypoint script permissions (safe normalization of known scripts)
+    for s in cybervps.sh fresh-install.sh verify.sh migrate.sh backup-now.sh restore.sh upload-backup.sh download-backup.sh; do
+        if [ -f "$CYBERVPS_DIR/$s" ] && [ -w "$CYBERVPS_DIR/$s" ]; then
+            chmod 0755 "$CYBERVPS_DIR/$s" 2>/dev/null || true
         fi
-    done < <(find "$CYBERVPS_DIR" -type f \( -name "*.sh" -o -name "*.env" -o -name "*.json" \) 2>/dev/null)
-    echo -e "${C_BGREEN}OK (${rep_count} files checked)${C_RESET}"
+    done
 
     # 3. Dynamic ports configuration
     echo -n "• Verifying ports configuration (ports.env)... "
@@ -123,7 +122,7 @@ handle_config_menu() {
     echo
     if [ -f "$CYBERVPS_CONFIG_FILE" ]; then
         echo -e "${C_BWHITE}Current config.env:${C_RESET}"
-        sed 's/^/  /' "$CYBERVPS_CONFIG_FILE"
+        sed -E 's/^([^#=]*(TOKEN|PASS|SECRET|KEY|COOKIE|AUTH)[^=]*)=.*/\1=[REDACTED]/I; s/^/  /' "$CYBERVPS_CONFIG_FILE"
     else
         echo -e "  ${C_DIM}(config.env not present; default runtime settings active)${C_RESET}"
     fi
@@ -147,16 +146,7 @@ handle_diagnostics_menu() {
     ui_kv "C Library" "$CYBER_LIBC $CYBER_LIBC_VERSION"
     ui_kv "User / UID" "$CYBER_USER / $CYBER_UID"
 
-    # Package manager detection without sudo prompt
-    local pkg_msg="None detected"
-    if command -v apt >/dev/null 2>&1 || command -v apt-get >/dev/null 2>&1; then
-        pkg_msg="APT detected — privileged installation unavailable (rootless)"
-    elif command -v dnf >/dev/null 2>&1; then
-        pkg_msg="DNF detected — privileged installation unavailable (rootless)"
-    elif command -v pacman >/dev/null 2>&1; then
-        pkg_msg="Pacman detected — privileged installation unavailable (rootless)"
-    fi
-    ui_kv "Package Mgr" "$pkg_msg"
+    print_capability_summary
 
     # Mount policy check
     local noexec_status="Allowed (standard)"
@@ -268,7 +258,7 @@ handle_services_submenu() {
     while true; do
         clear 2>/dev/null || echo
         ui_header
-        echo -e "${C_BCYAN}=== CyberVPS Rootless Service Manager (24/7 Hosting) ===${C_RESET}"
+        echo -e "${C_BCYAN}=== CyberVPS Rootless Service Manager ===${C_RESET}"
         echo
         service_list
         echo
@@ -599,7 +589,7 @@ handle_tunnels_submenu() {
                 ui_pause
                 ;;
             4)
-                tunnel_logs 30
+                tunnel_logs webterm 30
                 ui_pause
                 ;;
             0|[qQ]*)
@@ -665,6 +655,29 @@ handle_jobs_submenu() {
     done
 }
 
+handle_auto_menu() {
+    clear 2>/dev/null || echo
+    ui_header
+    cyber_auto_print_profile
+    echo
+    echo -e "${C_BWHITE}Choose Installation Level:${C_RESET}"
+    echo -e "  ${C_BCYAN}[1] Core System${C_RESET}       — Git, tmux, curl, jq, nano, CyberAgent"
+    echo -e "  ${C_BCYAN}[2] Hosting Stack${C_RESET}     — Web server (Nginx), PHP-FPM, Node.js, Python, Redis, PM2"
+    echo -e "  ${C_BCYAN}[3] Developer Suite${C_RESET}   — Level 2 + C/C++ (GCC/Clang/CMake), Go, Rust"
+    echo -e "  ${C_BCYAN}[4] Ultra Full [Recommended]${C_RESET} — Level 3 + Cloudflare Tunnel + Web Terminal + Supervision"
+    echo -e "  ${C_BWHITE}[0] Cancel / Back${C_RESET}\n"
+    local lvl=""
+    read -r -p "Enter Choice [1-4, Default: 4]: " lvl || return 0
+    case "$lvl" in
+        0|[qQ]*) return 0 ;;
+        1) cyber_auto_install 1 ;;
+        2) cyber_auto_install 2 ;;
+        3) cyber_auto_install 3 ;;
+        4|''|*) cyber_auto_install 4 ;;
+    esac
+    ui_pause
+}
+
 # Render V4 Dashboard
 show_dashboard() {
     clear 2>/dev/null || echo
@@ -672,7 +685,7 @@ show_dashboard() {
 
     ui_menu_section "RECOVERY" \
         "[1] Restore Backup Snapshot" \
-        "[2] Fresh Install / Rootless Rebuild" \
+        "[2] Install / Rebuild / Repair" \
         "[3] Migrate Backup From Another VPS"
 
     ui_menu_section "BACKUP & ARCHIVE" \
@@ -681,9 +694,11 @@ show_dashboard() {
         "[6] Download Backup from Remote Storage"
 
     ui_menu_section "HOSTING & RUNTIME" \
-        "[7] Service Manager (Persistent 24/7 Daemons)" \
+        "[7] Service Manager" \
         "[8] Persistent Terminals (Session Manager)" \
-        "[9] Authenticated Web Terminal (Browser SSH)"
+        "[9] Authenticated Web Terminal (Browser SSH)" \
+        "[A] CyberVPS Ultra Auto Provisioning (Zero-Touch)" \
+        "[S] Virtual Root Shell (root@cybervps:~#)"
 
     ui_menu_section "REMOTE CONTROL & ACCESS" \
         "[10] Telegram Bot Remote Control & Heartbeat" \
@@ -706,7 +721,7 @@ show_dashboard() {
 
     echo -e "  ${C_BWHITE}[0] Exit CyberVPS${C_RESET}"
     echo -e "${C_DIM}${UI_H}${line_h}${C_RESET}"
-    echo -e "  ${C_DIM}CyberVPS v${CYBERVPS_VERSION} • Backup Format v${CYBERVPS_BACKUP_FORMAT} • ROOTLESS PERSISTENT OPERATIONS${C_RESET}"
+    echo -e "  ${C_DIM}CyberVPS v${CYBERVPS_VERSION} • Backup Format v${CYBERVPS_BACKUP_FORMAT} • CAPABILITY-AWARE OPERATIONS${C_RESET}"
     echo
 }
 
@@ -741,7 +756,7 @@ main_loop() {
                 run_menu_action "Restore Backup" "$CYBERVPS_DIR/restore.sh" "restore"
                 ;;
             2)
-                run_menu_action "Fresh Rootless Rebuild" "$CYBERVPS_DIR/fresh-install.sh" "fresh-install"
+                run_menu_action "Install / Rebuild" "$CYBERVPS_DIR/fresh-install.sh" "fresh-install"
                 ;;
             3)
                 run_menu_action "Migrate Backup" "$CYBERVPS_DIR/migrate.sh" "migration"
@@ -784,6 +799,12 @@ main_loop() {
                 ;;
             16|[dD]*)
                 handle_diagnostics_menu
+                ;;
+            [aA]*)
+                handle_auto_menu
+                ;;
+            [sS]*)
+                cyber_guest_shell
                 ;;
             [cC]*)
                 handle_cyberroot_menu
@@ -834,6 +855,9 @@ elif [ "${1:-}" = "telegram" ]; then
 elif [ "${1:-}" = "job" ]; then
     shift
     handle_job_cli "$@"
+    exit $?
+elif [ "$#" -gt 0 ] && [ "${1:-}" != "--menu" ]; then
+    cyber_control_cli "$@"
     exit $?
 elif [ "${1:-}" = "--menu" ] || [ -t 0 ]; then
     main_loop

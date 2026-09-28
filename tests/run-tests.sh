@@ -14,16 +14,20 @@ echo "    CyberVPS Automated Test Runner      "
 echo "========================================"
 echo
 
-for test_script in "$TEST_DIR"/test-*.sh; do
+for test_script in "$TEST_DIR"/test-*.sh "$TEST_DIR"/test_*.sh; do
     [ -f "$test_script" ] || continue
     test_name="$(basename "$test_script")"
     echo "Running: $test_name..."
     chmod +x "$test_script"
-    if bash "$test_script"; then
+    run_cmd="bash"
+    if command -v timeout >/dev/null 2>&1; then
+        run_cmd="timeout 45s bash"
+    fi
+    if $run_cmd "$test_script"; then
         echo "RESULT: $test_name -> PASSED"
         PASSED=$((PASSED + 1))
     else
-        echo "RESULT: $test_name -> FAILED"
+        echo "RESULT: $test_name -> FAILED (exit code: $?)"
         FAILED=$((FAILED + 1))
     fi
     echo "----------------------------------------"

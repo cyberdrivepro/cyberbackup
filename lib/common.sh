@@ -5,6 +5,16 @@
 [ -n "${_CYBERVPS_COMMON_SH_LOADED:-}" ] && return 0
 _CYBERVPS_COMMON_SH_LOADED=1
 
+# Windows App Execution Aliases sometimes expose a non-functional python3
+# placeholder. Prefer a working interpreter while retaining the Linux command.
+if command -v python3 >/dev/null 2>&1; then
+    if ! python3 -c 'import sys' >/dev/null 2>&1 && command -v python >/dev/null 2>&1 && python -c 'import sys' >/dev/null 2>&1; then
+        python3() { command python "$@"; }
+    fi
+elif command -v python >/dev/null 2>&1 && python -c 'import sys' >/dev/null 2>&1; then
+    python3() { command python "$@"; }
+fi
+
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/logging.sh
 source "$LIB_DIR/logging.sh"
@@ -57,49 +67,12 @@ verify_sha256() {
     fi
 }
 
-# Download file safely via curl or wget
+# Download compatibility entrypoint; all callers use the same verified HTTPS engine.
 download_file() {
-    local url="$1"
-    local dest="$2"
-    local expected_sha="${3:-}"
-
-    ensure_directory "$(dirname "$dest")"
-    local tmp_dest="${dest}.tmp.$$"
-
-    log_info "Downloading: $url -> $dest"
-
-    local dl_ok=0
-    if have_command curl; then
-        if curl -fsSL --retry 3 --connect-timeout 15 -o "$tmp_dest" "$url"; then
-            dl_ok=1
-        fi
-    elif have_command wget; then
-        if wget -q -O "$tmp_dest" --tries=3 --timeout=15 "$url"; then
-            dl_ok=1
-        fi
-    else
-        log_error "Neither curl nor wget available to download files"
-        return 1
-    fi
-
-    if [ "$dl_ok" -ne 1 ] || [ ! -s "$tmp_dest" ]; then
-        rm -f "$tmp_dest"
-        log_error "Failed to download: $url"
-        return 1
-    fi
-
-    if [ -n "$expected_sha" ]; then
-        if ! verify_sha256 "$tmp_dest" "$expected_sha"; then
-            rm -f "$tmp_dest"
-            return 1
-        fi
-    fi
-
-    mv "$tmp_dest" "$dest"
-    log_ok "Downloaded successfully: $dest"
-    return 0
+    # shellcheck source=lib/download.sh
+    source "$CYBERVPS_ROOT/lib/download.sh"
+    cyber_download "$@"
 }
-
 # shellcheck source=lib/lock.sh
 source "$LIB_DIR/lock.sh"
 # shellcheck source=lib/architecture.sh
@@ -128,7 +101,7 @@ parse_env_file() {
             fi
             # Restrict export to CYBERVPS_* or known port/service keys
             case "$key" in
-                CYBERVPS_*|WEB_PORT|WEB_PROXY_PORT|REDIS_PORT|FASTAPI_PORT|NODE_PORT|CONDA_ENV)
+                CYBERVPS_*|WEBTERM_USER|WEBTERM_PASS|WEB_TERMINAL_PORT|CYBERROOT_SSH_PORT|CYBERVM_SSH_PORT|RDP_PORT|WEB_PORT|WEB_PROXY_PORT|REDIS_PORT|FASTAPI_PORT|NODE_PORT|CONDA_ENV)
                     export "$key=$val"
                     ;;
                 *)

@@ -5,15 +5,60 @@ set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$TEST_DIR/.." && pwd)"
 
-# shellcheck source=lib/webterm.sh
-source "$REPO_DIR/lib/webterm.sh"
-
 ORIG_PATH="$PATH"
 MOCK_ROOT="$(mktemp -d /tmp/cybervps-test-webterm-XXXXXX)"
 export HOME="$MOCK_ROOT"
 export XDG_CONFIG_HOME="$MOCK_ROOT/.config"
 export XDG_STATE_HOME="$MOCK_ROOT/.local/state"
-export PATH="$ORIG_PATH:$MOCK_ROOT/.local/bin"
+export PATH="$MOCK_ROOT/.local/bin:$ORIG_PATH"
+
+mkdir -p "$MOCK_ROOT/.local/bin"
+if ! command -v ttyd >/dev/null 2>&1; then
+    cat > "$MOCK_ROOT/.local/bin/ttyd" << 'EOF'
+#!/usr/bin/env python3
+import base64, http.server, socketserver, sys
+bind = "127.0.0.1"
+port = 7681
+cred = ""
+args = sys.argv[1:]
+i = 0
+while i < len(args):
+    if args[i] == '-i' and i + 1 < len(args):
+        bind = args[i+1]; i += 2
+    elif args[i] == '-p' and i + 1 < len(args):
+        port = int(args[i+1]); i += 2
+    elif args[i] == '-c' and not cred and i + 1 < len(args):
+        cred = args[i+1]; i += 2
+    elif not args[i].startswith('-'):
+        break
+    else:
+        i += 1
+expected_auth = "Basic " + base64.b64encode(cred.encode()).decode() if cred else ""
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        auth_header = self.headers.get('Authorization', '')
+        if expected_auth and auth_header != expected_auth:
+            self.send_response(401)
+            self.send_header('WWW-Authenticate', 'Basic realm="ttyd"')
+            self.end_headers()
+            self.wfile.write(b'Unauthorized')
+        else:
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'OK')
+    def log_message(self, format, *args):
+        pass
+class ReusableServer(socketserver.TCPServer):
+    allow_reuse_address = True
+with ReusableServer((bind, port), Handler) as httpd:
+    httpd.serve_forever()
+EOF
+    chmod 0755 "$MOCK_ROOT/.local/bin/ttyd"
+fi
+
+# shellcheck source=lib/webterm.sh
+source "$REPO_DIR/lib/webterm.sh"
 
 cleanup() {
     webterm_stop 2>/dev/null || true

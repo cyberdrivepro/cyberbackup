@@ -63,8 +63,11 @@ def redact_secrets(text: str) -> str:
 def audit_log(user_id: int, action: str, target: str, result: str):
     """Appends an entry to the audit log."""
     ts = datetime.now(timezone.utc).isoformat()
-    entry = f"{ts} user={user_id} action={action} target={target} result={result}\n"
+    entry = json.dumps({"timestamp": ts, "actor": user_id, "action": action,
+                        "target": redact_secrets(target), "result": redact_secrets(result)}) + "\n"
     try:
+        if os.path.exists(AUDIT_FILE) and os.path.getsize(AUDIT_FILE) > 1048576:
+            os.replace(AUDIT_FILE, AUDIT_FILE + ".1")
         with open(AUDIT_FILE, "a", encoding="utf-8") as f:
             f.write(entry)
     except Exception:
@@ -176,6 +179,7 @@ def telegram_api(method: str, params: dict = None) -> dict:
 
 def send_message(chat_id: int, text: str, reply_markup: dict = None) -> bool:
     """Sends a Telegram message, truncating safely if too large."""
+    text = redact_secrets(text)
     if len(text) > 4000:
         text = text[:3950] + "\n... [Truncated for size]"
     params = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
@@ -348,21 +352,9 @@ def handle_update(update: dict):
     admin_ids = cfg.get("admin_user_ids", [])
     admin_chats = cfg.get("admin_chat_ids", [])
 
-    # Registration for first admin or allowlisted users
+    # Only locally allowlisted users can register a private chat.
     if text.startswith("/start"):
-        # Auto-allowlist if no admin has been registered yet
-        if not admin_ids:
-            admin_ids.append(user_id)
-            admin_chats.append(chat_id)
-            cfg["admin_user_ids"] = admin_ids
-            cfg["admin_chat_ids"] = admin_chats
-            save_config(cfg)
-            audit_log(user_id, "admin_registered", str(chat_id), "SUCCESS")
-            send_message(chat_id, "<b>✅ Administrator Registered</b>\nWelcome to CyberVPS Remote Administration.", main_keyboard())
-            # Send initial startup notification
-            send_startup_notice()
-            return
-        elif user_id in admin_ids:
+        if user_id in admin_ids and chat_id == user_id:
             if chat_id not in admin_chats:
                 admin_chats.append(chat_id)
                 cfg["admin_chat_ids"] = admin_chats
@@ -375,7 +367,7 @@ def handle_update(update: dict):
             return
 
     # Check authorization for all other commands
-    if user_id not in admin_ids:
+    if user_id not in admin_ids or chat_id != user_id:
         send_message(chat_id, "<b>Access Denied.</b>")
         audit_log(user_id, "unauthorized_command", text, "DENIED")
         return
@@ -420,7 +412,7 @@ def handle_update(update: dict):
         send_message(chat_id, res_text, main_keyboard())
 
     elif cmd == "/health":
-        rc, out, _ = run_cybervps_cmd(["verify.sh"])
+        rc, out, _ = run_cybervps_cmd(["doctor"])
         send_message(chat_id, f"<b>🩺 Health Check:</b>\n<pre>{out[:3500]}</pre>")
 
     elif cmd == "/services":

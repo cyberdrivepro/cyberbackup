@@ -10,6 +10,7 @@ _CYBERVPS_WEBTERM_SH_LOADED=1
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "$LIB_DIR/common.sh"
+source "$LIB_DIR/process.sh"
 # shellcheck source=lib/detect.sh
 source "$LIB_DIR/detect.sh"
 # shellcheck source=lib/ports.sh
@@ -42,15 +43,16 @@ webterm_ensure_auth() {
         if have_command openssl; then
             pass="$(openssl rand -hex 16)"
         else
-            pass="$(head -c 16 /dev/urandom 2>/dev/null | xxd -p 2>/dev/null || echo "cybervps-$RANDOM$RANDOM")"
+            pass="$(python3 -c 'import secrets; print(secrets.token_hex(24))')" || return 7
         fi
 
-        cat > "$auth_file" <<EOF
+        (umask 077; cat > "$auth_file" <<EOF
 # CyberVPS Web Terminal Authentication Credentials
 # Permissions: 0600 — Keep private, never commit to git
 WEBTERM_USER="$user"
 WEBTERM_PASS="$pass"
 EOF
+        )
         chmod 0600 "$auth_file" 2>/dev/null || true
         log_ok "Generated web terminal credentials in $auth_file"
     fi
@@ -64,8 +66,8 @@ webterm_ensure_installed() {
 
     log_info "ttyd not found in PATH. Installing user-space binary..."
     local installer="$LIB_DIR/../installers/ttyd.sh"
-    if [ -x "$installer" ]; then
-        bash "$installer"
+    if [ -f "$installer" ] && [ -r "$installer" ]; then
+        bash "$installer" || { log_error "Failed to install ttyd."; return 1; }
     else
         log_error "Installer $installer not found."
         return 1
@@ -79,10 +81,10 @@ webterm_is_running() {
     if [ -f "$pid_file" ]; then
         local pid
         pid="$(cat "$pid_file" 2>/dev/null || true)"
-        if [ -n "$pid" ] && [ "$pid" -gt 0 ] && kill -0 "$pid" 2>/dev/null; then
+        if process_is_owned "$pid_file"; then
             return 0
         fi
-        rm -f "$pid_file"
+        rm -f "$pid_file" "$pid_file.identity.json"
     fi
     return 1
 }
@@ -90,6 +92,7 @@ webterm_is_running() {
 # Start the web terminal
 webterm_start() {
     local target_session="${1:-main}"
+    cyber_validate_name "$target_session" || return 2
 
     webterm_init_dirs
     webterm_ensure_installed || return 1
@@ -104,12 +107,13 @@ webterm_start() {
     # Ensure target tmux session exists
     if ! session_is_alive "$target_session"; then
         log_info "Creating persistent session '$target_session' for web terminal..."
-        session_new "$target_session"
+        session_new "$target_session" || return 8
     fi
 
     # Source auth credentials
     # shellcheck source=/dev/null
-    source "$WEBTERM_CONFIG_DIR/auth.env"
+    parse_env_file "$WEBTERM_CONFIG_DIR/auth.env"
+    [ -n "${WEBTERM_USER:-}" ] && [ -n "${WEBTERM_PASS:-}" ] || return 6
 
     # Allocate dynamic port
     init_ports_config
@@ -132,6 +136,7 @@ webterm_start() {
     nohup ttyd -i "$bind_ip" -p "$port" -c "${WEBTERM_USER}:${WEBTERM_PASS}" -W bash -c "$attach_cmd" > "$log_file" 2>&1 &
     local pid=$!
     echo "$pid" > "$pid_file"
+    process_record "$pid" "$pid_file" || return 8
 
     local now
     now="$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date)"
@@ -170,12 +175,10 @@ webterm_stop() {
     if [ -f "$pid_file" ]; then
         local pid
         pid="$(cat "$pid_file" 2>/dev/null || true)"
-        if [ -n "$pid" ] && [ "$pid" -gt 0 ]; then
-            kill "$pid" 2>/dev/null || true
-            sleep 0.5
-            kill -9 "$pid" 2>/dev/null || true
+        if process_is_owned "$pid_file"; then
+            process_stop_owned "$pid_file" || return 8
         fi
-        rm -f "$pid_file"
+        rm -f "$pid_file" "$pid_file.identity.json"
     fi
 
     rm -f "$WEBTERM_STATE_DIR/current.json"
@@ -253,7 +256,7 @@ webterm_configure() {
     echo "=== Web Terminal Configuration & Access ==="
     echo "Configuration Directory: $WEBTERM_CONFIG_DIR"
     echo "Credentials (0600):"
-    sed 's/^/  /' "$auth_file"
+    printf "  Authentication: configured (redacted)\n"
     echo
     echo "To reset password, delete $auth_file and restart webterm."
 }
@@ -311,4 +314,19 @@ handle_webterm_cli() {
             return 1
             ;;
     esac
+}
+
+# Passwords are data; never source this file or print it in status output.
+webterm_set_password() {
+    local username="${1:-}" password="${2:-}"
+    [[ "$username" =~ ^[a-zA-Z0-9_-]+$ ]] || return 2
+    [ "${#password}" -ge 12 ] || { log_error "Password must contain at least 12 characters."; return 2; }
+    [[ "$password" != *$'\n'* && "$password" != *$'\r'* ]] || return 2
+    webterm_init_dirs
+    local temp
+    temp="$(mktemp "$WEBTERM_CONFIG_DIR/auth.XXXXXX")" || return 8
+    chmod 600 "$temp" || return 8
+    printf 'WEBTERM_USER=%s\nWEBTERM_PASS=%s\n' "$username" "$password" > "$temp"
+    mv -f -- "$temp" "$WEBTERM_CONFIG_DIR/auth.env" || return 8
+    log_ok "Credentials updated. Restart webterm to apply."
 }

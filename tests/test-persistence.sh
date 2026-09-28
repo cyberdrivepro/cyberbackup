@@ -20,6 +20,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Never modify the real user's crontab during a test.
+crontab() { printf 'crontab access denied\n' >&2; return 1; }
+
 echo "=== Testing Persistence Detection Matrix ==="
 matrix="$(persistence_detect_modes)"
 echo "$matrix" | grep -q "Persistence Capability Matrix"

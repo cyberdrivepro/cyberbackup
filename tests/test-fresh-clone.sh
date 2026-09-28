@@ -48,9 +48,9 @@ assert_true "Scripts are indeed non-executable" test ! -x "$CLONE_DIR/verify.sh"
 
 # 3. Test running cybervps.sh using canonical Bash command
 log_info "Testing canonical 'bash cybervps.sh' invocation..."
-OUTPUT=$(printf "8\n\n0\n" | bash "$CLONE_DIR/cybervps.sh" --menu 2>&1 || true)
+OUTPUT=$(printf "14\n\n0\n" | bash "$CLONE_DIR/cybervps.sh" --menu 2>&1 || true)
 
-assert_true "Dashboard rendered successfully" grep -q "CYBERVPS • ROOTLESS CLOUD CONTROL CENTER" <<< "$OUTPUT"
+assert_true "Dashboard rendered successfully" grep -q "CYBERVPS ULTRA" <<< "$OUTPUT"
 assert_true "Status menu rendered without Permission Denied" grep -q "=== CyberVPS System Status" <<< "$OUTPUT"
 assert_true "Exited cleanly on option 0" grep -q "Exiting CyberVPS. Goodbye!" <<< "$OUTPUT"
 

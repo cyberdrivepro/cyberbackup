@@ -239,6 +239,13 @@ id_ed25519.pub
 *.pem
 credentials*
 tokens*
+bot_token
+auth.env
+secrets
+identity
+*.identity.json
+config.json
+*.sqlite*
 
 # Large external storage
 shared
@@ -273,6 +280,8 @@ EXCLUDES
     sha256="$(sha256sum "$archive_path" | awk '{print $1}')"
     local size_bytes
     size_bytes="$(stat -c%s "$archive_path" 2>/dev/null || stat -f%z "$archive_path" 2>/dev/null || echo 0)"
+
+    printf '%s  %s\n' "$sha256" "$archive_name" > "$archive_path.sha256"
 
     # Write metadata latest.json atomically
     local metadata_file="${dest_dir}/latest.json"

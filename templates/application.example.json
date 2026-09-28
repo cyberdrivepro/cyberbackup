@@ -1,0 +1,8 @@
+{
+  "format_version": 1,
+  "repo": "https://github.com/OWNER/PROJECT.git",
+  "build_argv": ["python3", "-m", "venv", ".venv"],
+  "start_argv": [".venv/bin/python", "app.py"],
+  "health_type": "http",
+  "health_target": "http://127.0.0.1:8080/health"
+}

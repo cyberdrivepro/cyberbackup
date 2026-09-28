@@ -33,8 +33,8 @@ echo "PASS: parse_env_file parsed expected keys and ignored unauthorized keys"
 
 # 2. Test Locking
 acquire_lock "testlock" || { echo "FAIL: Failed to acquire lock"; exit 1; }
-# Trying to acquire same lock in subshell should fail
-if ( acquire_lock "testlock" ) 2>/dev/null; then
+# Trying to acquire same lock in subshell should fail immediately (timeout 0)
+if ( acquire_lock "testlock" 0 ) 2>/dev/null; then
     echo "FAIL: Concurrent acquire_lock should have failed"
     exit 1
 fi

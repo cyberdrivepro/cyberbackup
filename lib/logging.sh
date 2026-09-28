@@ -10,7 +10,8 @@ CYBERVPS_LOG_LEVEL="${CYBERVPS_LOG_LEVEL:-info}" # debug, info, warn, error
 
 # Setup log directory and file
 init_logging() {
-    local target_dir="${HOME}/.local/state/cybervps/logs"
+    [ "${CYBERVPS_READ_ONLY:-0}" = 1 ] && return 0
+    local target_dir="${XDG_STATE_HOME:-$HOME/.local/state}/cybervps/logs"
     if ! mkdir -p "$target_dir" 2>/dev/null; then
         target_dir="${HOME}/logs/cybervps"
         mkdir -p "$target_dir" 2>/dev/null || target_dir="/tmp"
@@ -43,9 +44,13 @@ _log_timestamp() {
 }
 
 _write_logfile() {
+    [ "${CYBERVPS_READ_ONLY:-0}" = 1 ] && return 0
     local level="$1"
     shift
     if [ -n "${CYBERVPS_LOG_FILE:-}" ] && [ -w "${CYBERVPS_LOG_FILE:-}" ]; then
+        if [ "$(wc -c < "$CYBERVPS_LOG_FILE")" -gt 1048576 ]; then
+            mv -f -- "$CYBERVPS_LOG_FILE" "$CYBERVPS_LOG_FILE.1" || return 1
+        fi
         printf '[%s] [%-5s] %s\n' "$(_log_timestamp)" "$level" "$*" >> "$CYBERVPS_LOG_FILE" 2>/dev/null || true
     fi
 }

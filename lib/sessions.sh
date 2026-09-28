@@ -10,6 +10,7 @@ _CYBERVPS_SESSIONS_SH_LOADED=1
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "$LIB_DIR/common.sh"
+source "$LIB_DIR/process.sh"
 # shellcheck source=lib/detect.sh
 source "$LIB_DIR/detect.sh"
 
@@ -51,6 +52,7 @@ session_get_backend() {
 # Validate session name format (alphanumeric, dash, underscore only)
 session_validate_name() {
     local name="$1"
+    cyber_validate_name "$name" || return 2
     if [[ ! "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
         log_error "Invalid session name '$name'. Must contain only alphanumeric, dash, and underscore."
         return 1
@@ -61,6 +63,7 @@ session_validate_name() {
 # Check if a session is alive
 session_is_alive() {
     local name="$1"
+    cyber_validate_name "$name" || return 2
     session_init_dirs
     local meta_file="$SESSION_STATE_DIR/${name}.json"
     [ -f "$meta_file" ] || return 1
@@ -80,7 +83,7 @@ session_is_alive() {
         nohup|systemd-user)
             local pid
             pid="$(grep -o '"pid": *[0-9]*' "$meta_file" 2>/dev/null | grep -o '[0-9]*' || true)"
-            if [ -n "$pid" ] && [ "$pid" -gt 0 ] && kill -0 "$pid" 2>/dev/null; then
+            if process_is_owned "$meta_file"; then
                 return 0
             fi
             return 1
@@ -94,6 +97,7 @@ session_is_alive() {
 # Write session metadata JSON
 _session_write_meta() {
     local name="$1" backend="$2" cwd="$3" shell_bin="$4" state="$5" pid="$6" tmux_name="$7" cmd="$8" log_file="$9"
+    cyber_validate_name "$name" || return 2
     local now
     now="$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%dT%H:%M:%SZ")"
     local meta_file="$SESSION_STATE_DIR/${name}.json"
@@ -123,6 +127,7 @@ EOF
 # Create a new persistent session
 session_new() {
     local name="$1"
+    cyber_validate_name "$name" || return 2
     shift || true
     local cmd="${*:-}"
 
@@ -164,17 +169,18 @@ session_new() {
             ;;
         nohup|*)
             backend="nohup"
-            if [ -n "$cmd" ]; then
-                (cd "$cwd" && nohup sh -c "$cmd" > "$log_file" 2>&1 & echo $! > "$SESSION_STATE_DIR/${name}.pid")
-            else
-                (cd "$cwd" && nohup "$shell_bin" -l > "$log_file" 2>&1 & echo $! > "$SESSION_STATE_DIR/${name}.pid")
-            fi
+            local run_cmd="${cmd:-sleep infinity}"
+            (cd "$cwd" && nohup sh -c "$run_cmd" > "$log_file" 2>&1 & echo $! > "$SESSION_STATE_DIR/${name}.pid")
             pid="$(cat "$SESSION_STATE_DIR/${name}.pid" 2>/dev/null || echo 0)"
             rm -f "$SESSION_STATE_DIR/${name}.pid"
             ;;
     esac
 
     _session_write_meta "$name" "$backend" "$cwd" "$shell_bin" "RUNNING" "$pid" "$tmux_name" "$target_cmd" "$log_file"
+    if [ "$backend" = nohup ]; then
+        process_record "$pid" "$SESSION_STATE_DIR/${name}.json" || return 8
+    fi
+    session_is_alive "$name" || { log_error "Session exited during startup."; return 8; }
     log_success "Session '$name' started successfully (backend: $backend, PID: $pid)."
     return 0
 }
@@ -215,6 +221,7 @@ session_list() {
 # Show detailed session information
 session_info() {
     local name="$1"
+    cyber_validate_name "$name" || return 2
     session_init_dirs
     local meta_file="$SESSION_STATE_DIR/${name}.json"
 
@@ -236,6 +243,7 @@ session_info() {
 # Attach to an interactive session
 session_attach() {
     local name="$1"
+    cyber_validate_name "$name" || return 2
     session_init_dirs
 
     if ! session_is_alive "$name"; then
@@ -267,6 +275,7 @@ session_attach() {
 # Execute a command in a session
 session_exec() {
     local name="$1"
+    cyber_validate_name "$name" || return 2
     shift
     local cmd="$*"
 
@@ -304,6 +313,7 @@ session_send() {
 # Stop a session
 session_stop() {
     local name="$1"
+    cyber_validate_name "$name" || return 2
     session_init_dirs
 
     local meta_file="$SESSION_STATE_DIR/${name}.json"
@@ -327,10 +337,8 @@ session_stop() {
         nohup|*)
             local pid
             pid="$(grep -o '"pid": *[0-9]*' "$meta_file" 2>/dev/null | grep -o '[0-9]*')"
-            if [ -n "$pid" ] && [ "$pid" -gt 0 ]; then
-                kill "$pid" 2>/dev/null || true
-                sleep 0.5
-                kill -9 "$pid" 2>/dev/null || true
+            if process_is_owned "$meta_file"; then
+                process_stop_owned "$meta_file" || return 8
             fi
             ;;
     esac
@@ -344,6 +352,7 @@ session_stop() {
 # Restart a session
 session_restart() {
     local name="$1"
+    cyber_validate_name "$name" || return 2
     session_init_dirs
 
     local meta_file="$SESSION_STATE_DIR/${name}.json"
@@ -364,9 +373,9 @@ session_restart() {
 session_rename() {
     local old_name="$1"
     local new_name="$2"
-
+    cyber_validate_name "$old_name" || return 2
+    cyber_validate_name "$new_name" || return 2
     session_init_dirs
-    session_validate_name "$new_name" || return 1
 
     local old_meta="$SESSION_STATE_DIR/${old_name}.json"
     local new_meta="$SESSION_STATE_DIR/${new_name}.json"
@@ -390,6 +399,8 @@ session_rename() {
     sed -i "s/\"name\": *\"$old_name\"/\"name\": \"$new_name\"/" "$old_meta"
     sed -i "s/cybervps-$old_name/cybervps-$new_name/g" "$old_meta"
     mv "$old_meta" "$new_meta"
+    [ -f "${old_meta}.identity.json" ] && mv "${old_meta}.identity.json" "${new_meta}.identity.json"
+    [ -f "$SESSION_LOGS_DIR/${old_name}.log" ] && mv "$SESSION_LOGS_DIR/${old_name}.log" "$SESSION_LOGS_DIR/${new_name}.log"
 
     log_success "Renamed session '$old_name' to '$new_name'."
 }
@@ -397,6 +408,7 @@ session_rename() {
 # View session logs or pane history
 session_logs() {
     local name="$1"
+    cyber_validate_name "$name" || return 2
     local lines="${2:-50}"
 
     session_init_dirs
@@ -427,10 +439,12 @@ session_logs() {
 # Kill and permanently remove a session
 session_kill() {
     local name="$1"
+    cyber_validate_name "$name" || return 2
     session_init_dirs
 
     session_stop "$name" 2>/dev/null || true
     rm -f "$SESSION_STATE_DIR/${name}.json"
+    rm -f "$SESSION_STATE_DIR/${name}.json.identity.json"
     rm -f "$SESSION_LOGS_DIR/${name}.log"
     log_success "Session '$name' killed and metadata removed."
 }

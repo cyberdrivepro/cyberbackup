@@ -136,29 +136,28 @@ ui_kv() {
 
 # Pause prompt
 ui_pause() {
+    [ -t 0 ] || return 0
     local prompt="${1:-Press Enter to continue...}"
     echo
     echo -ne "${C_DIM}${prompt}${C_RESET} "
     read -r _ || true
 }
 
-# Render rootless capability badges
+# Render capabilities from the canonical detector.
 ui_render_capabilities() {
-    local git_badge="${C_DIM}[${UI_DASH} Git]${C_RESET}"
-    local net_badge="${C_DIM}[${UI_DASH} Network]${C_RESET}"
-    local user_badge="${C_BGREEN}[${UI_CHECK} User-Space]${C_RESET}"
-    local root_badge="${C_DIM}[${UI_DASH} Root]${C_RESET}"
-    local pkg_badge="${C_DIM}[${UI_DASH} System Pkgs]${C_RESET}"
-
-    command -v git >/dev/null 2>&1 && git_badge="${C_BCYAN}[${UI_CHECK} Git]${C_RESET}"
-    (command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1) && net_badge="${C_BCYAN}[${UI_CHECK} Net]${C_RESET}"
-    
-    local mamba_badge=""
-    if command -v micromamba >/dev/null 2>&1 || [ -x "$HOME/bin/micromamba" ]; then
-        mamba_badge=" ${C_BCYAN}[${UI_CHECK} Micromamba]${C_RESET}"
-    fi
-
-    echo -e "  ${C_DIM}Capabilities:${C_RESET} ${user_badge} ${git_badge} ${net_badge}${mamba_badge} ${root_badge} ${pkg_badge}"
+    local root_label="Root unavailable"
+    case "$CYBER_PRIVILEGE_MODE" in
+        ROOT) root_label="Root available" ;;
+        CONTAINER_ROOT) root_label="Root (container namespace)" ;;
+        SUDO_AUTHORIZED) root_label="Sudo authorized" ;;
+        CYBERROOT_GUEST) root_label="Guest root only" ;;
+    esac
+    printf '  Capabilities: [%s] [System Pkgs: %s] [systemd: %s]
+' "$root_label" "$CYBER_SYSTEM_PACKAGES" "$CYBER_SYSTEMD_SYSTEM"
+    printf '  Resources: %s vCPU / %sMB RAM effective; %sMB free in HOME
+' "$CYBER_NPROC" "$CYBER_RAM_TOTAL_MB" "$CYBER_DISK_FREE_MB"
+    printf '  Provider: %s; volume persistence: UNKNOWN
+' "$CYBER_PROVIDER_HINT"
 }
 
 # Render Main CyberVPS V3 Header Card
@@ -174,7 +173,7 @@ ui_header() {
     echo -e "${C_BCYAN}${UI_TL}${line_h}${UI_TR}${C_RESET}"
 
     # Title line
-    local title="CYBERVPS • ROOTLESS CLOUD CONTROL CENTER"
+    local title="CYBERVPS ULTRA - CLOUD CONTROL CENTER"
     local t_len=${#title}
     local pad_left=$(( (inner_width - t_len) / 2 ))
     local pad_right=$(( inner_width - t_len - pad_left ))
@@ -188,7 +187,7 @@ ui_header() {
 
     # Profile grid lines
     local host_str="Host: ${CYBER_HOSTNAME:-unknown}"
-    local user_str="User: ${CYBER_USER:-unknown} (Mode: ROOTLESS)"
+    local user_str="User: ${CYBER_USER:-unknown} (Mode: ${CYBER_PRIVILEGE_MODE})"
     local os_str="OS:   ${CYBER_DISTRO_PRETTY:-Linux}"
     local arch_str="Arch: ${CYBER_ARCH:-x86_64} (${CYBER_LIBC:-glibc} ${CYBER_LIBC_VERSION:-})"
     local home_str="Home: ${CYBER_HOME:-$HOME}"
@@ -322,15 +321,10 @@ ui_preflight_box() {
     echo -e "${C_BCYAN}${UI_V}${C_RESET}${sp_left}${C_BWHITE}${title}${C_RESET}${sp_right}${C_BCYAN}${UI_V}${C_RESET}"
     echo -e "${C_BCYAN}${UI_ML}${line_h}${UI_MR}${C_RESET}"
 
-    # Internet check
-    local net_status="${C_BGREEN}PASS (connected)${C_RESET}"
-    if command -v curl >/dev/null 2>&1; then
-        curl -s --connect-timeout 3 -I https://1.1.1.1 >/dev/null 2>&1 || net_status="${C_BYELLOW}WARN (offline / restricted)${C_RESET}"
-    elif command -v wget >/dev/null 2>&1; then
-        wget -q --spider --timeout=3 http://1.1.1.1 >/dev/null 2>&1 || net_status="${C_BYELLOW}WARN (offline / restricted)${C_RESET}"
-    else
-        net_status="${C_BYELLOW}WARN (no curl/wget)${C_RESET}"
-    fi
+    # Explicit multi-endpoint diagnostics; dry-run never probes the network.
+    detect_network
+    local net_status="${C_WHITE}${CYBER_NETWORK_STATE}${C_RESET}"
+    if [ "${CYBERVPS_READ_ONLY:-0}" = 1 ]; then net_status="SKIP (read-only)"; fi
 
     # Home writable
     local home_status="${C_BGREEN}PASS (${CYBER_HOME:-$HOME})${C_RESET}"
@@ -338,10 +332,11 @@ ui_preflight_box() {
         home_status="${C_BRED}FAIL (read-only)${C_RESET}"
     fi
 
-    local env_status="${C_BGREEN}PASS (non-root user-space)${C_RESET}"
-    local root_status="${C_BGREEN}NOT REQUIRED (0% root)${C_RESET}"
-    local pkg_status="${C_BGREEN}NOT USED (zero apt/dnf/pacman)${C_RESET}"
-    local ready_status="${C_BGREEN}READY (profile: ${profile})${C_RESET}"
+    local env_status="${CYBER_PRIVILEGE_MODE}"
+    local root_status="${CYBER_CAN_ADMIN}"
+    [ "$CYBER_IS_CYBERROOT_GUEST" = true ] && root_status="guest only (host privilege unavailable)"
+    local pkg_status="${CYBER_SYSTEM_PACKAGES} (${CYBER_PACKAGE_MANAGER:-none})"
+    local ready_status="profile: ${profile}; mode: ${CYBERVPS_INSTALL_MODE:-auto}"
 
     local disk_str="${CYBER_DISK_FREE_MB:-unknown}MB available"
     if [ "${CYBER_DISK_FREE_MB:-unknown}" != "unknown" ]; then
@@ -363,13 +358,14 @@ ui_preflight_box() {
     _ui_preflight_row "Environment           " "$env_status" "$inner_width"
     _ui_preflight_row "HOME writable         " "$home_status" "$inner_width"
     _ui_preflight_row "Internet connectivity " "$net_status" "$inner_width"
+    _ui_preflight_row "Effective CPU / RAM   " "${CYBER_NPROC} vCPU / ${CYBER_RAM_TOTAL_MB}MB" "$inner_width"
     _ui_preflight_row "CPU architecture      " "${C_WHITE}${arch_str}${C_RESET}" "$inner_width"
     _ui_preflight_row "C runtime library     " "${C_WHITE}${libc_str}${C_RESET}" "$inner_width"
     _ui_preflight_row "System root (sudo)    " "$root_status" "$inner_width"
     _ui_preflight_row "System package manager" "$pkg_status" "$inner_width"
-    _ui_preflight_row "User-space install    " "$ready_status" "$inner_width"
+    _ui_preflight_row "Selected installation " "$ready_status" "$inner_width"
     _ui_preflight_row "Disk space free       " "${C_WHITE}${disk_str}${C_RESET}" "$inner_width"
-    _ui_preflight_row "Memory available      " "${C_WHITE}${ram_str}${C_RESET}" "$inner_width"
+    _ui_preflight_row "Effective RAM free    " "${C_WHITE}${ram_str}${C_RESET}" "$inner_width"
 
     echo -e "${C_BCYAN}${UI_BL}${line_h}${UI_BR}${C_RESET}"
 }

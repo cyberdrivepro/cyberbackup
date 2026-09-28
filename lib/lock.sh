@@ -34,7 +34,11 @@ acquire_lock() {
     if _have_cmd flock; then
         # Open file descriptor for lock
         eval "exec ${CYBERVPS_LOCK_FD}>\"\$lock_file\""
-        if flock -w "$timeout" "$CYBERVPS_LOCK_FD"; then
+        local flock_args=("-w" "$timeout")
+        if [ "$timeout" -le 0 ]; then
+            flock_args=("-n")
+        fi
+        if flock "${flock_args[@]}" "$CYBERVPS_LOCK_FD"; then
             echo "$$" >&"$CYBERVPS_LOCK_FD" 2>/dev/null || true
             _CYBERVPS_CURRENT_LOCK_NAME="$lock_name"
             log_debug "Acquired lock (flock) for: $lock_name (PID $$)"

@@ -9,6 +9,7 @@ _CYBERVPS_TUNNEL_SH_LOADED=1
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "$LIB_DIR/common.sh"
+source "$LIB_DIR/process.sh"
 # shellcheck source=lib/detect.sh
 source "$LIB_DIR/detect.sh"
 # shellcheck source=lib/ports.sh
@@ -44,8 +45,8 @@ tunnel_ensure_installed() {
 
     log_info "cloudflared not found in PATH. Running user-space installer..."
     local installer="$LIB_DIR/../installers/cloudflared.sh"
-    if [ -x "$installer" ]; then
-        bash "$installer"
+    if [ -f "$installer" ] && [ -r "$installer" ]; then
+        bash "$installer" || return $?
         export PATH="${HOME}/bin:$PATH"
     else
         log_error "Cloudflared installer not found at $installer"
@@ -56,15 +57,16 @@ tunnel_ensure_installed() {
 # Check if tunnel is running
 tunnel_is_running() {
     local target="$1"
+    cyber_validate_name "$target" || return 2
     tunnel_init_dirs
     local pid_file="$TUNNEL_STATE_DIR/${target}.pid"
     if [ -f "$pid_file" ]; then
         local pid
         pid="$(cat "$pid_file" 2>/dev/null || true)"
-        if [ -n "$pid" ] && [ "$pid" -gt 0 ] && kill -0 "$pid" 2>/dev/null; then
+        if process_is_owned "$pid_file"; then
             return 0
         fi
-        rm -f "$pid_file"
+        rm -f "$pid_file" "$pid_file.identity.json"
     fi
     return 1
 }
@@ -72,6 +74,8 @@ tunnel_is_running() {
 # Start Cloudflare tunnel for a target service (e.g. webterm, dashboard, port)
 tunnel_start() {
     local target="${1:-webterm}"
+    [[ "$target" =~ ^[0-9]+$ ]] && target="port-$target"
+    cyber_validate_name "$target" || return 2
 
     tunnel_init_dirs
     tunnel_ensure_installed || return 1
@@ -86,16 +90,18 @@ tunnel_start() {
     case "$target" in
         webterm)
             init_ports_config
-            port="$(get_port WEB_TERMINAL_PORT 7681)"
+            load_ports_env
+            port="${WEB_TERMINAL_PORT:-7681}"
             ;;
         dashboard|web)
             init_ports_config
-            port="$(get_port WEB_PORT 8080)"
+            load_ports_env
+            port="${WEB_PORT:-8080}"
             ;;
         *)
-            if [[ "$target" =~ ^[0-9]+$ ]]; then
-                port="$target"
-                target="port-${port}"
+            if [[ "$target" =~ ^port-([0-9]+)$ ]]; then
+                port="${BASH_REMATCH[1]}"
+                [ "$port" -ge 1024 ] && [ "$port" -le 65535 ] || return 2
             else
                 log_error "Unknown tunnel target '$target'. Specify 'webterm' or a local port number."
                 return 1
@@ -113,6 +119,7 @@ tunnel_start() {
     nohup cloudflared tunnel --url "http://127.0.0.1:${port}" --no-autoupdate > "$log_file" 2>&1 &
     local pid=$!
     echo "$pid" > "$pid_file"
+    process_record "$pid" "$pid_file" || return 8
 
     # Wait briefly and parse tunnel URL from log file
     local url=""
@@ -158,18 +165,18 @@ EOF
 # Stop tunnel
 tunnel_stop() {
     local target="${1:-webterm}"
+    [[ "$target" =~ ^[0-9]+$ ]] && target="port-$target"
+    cyber_validate_name "$target" || return 2
     tunnel_init_dirs
 
     local pid_file="$TUNNEL_STATE_DIR/${target}.pid"
     if [ -f "$pid_file" ]; then
         local pid
         pid="$(cat "$pid_file" 2>/dev/null || true)"
-        if [ -n "$pid" ] && [ "$pid" -gt 0 ]; then
-            kill "$pid" 2>/dev/null || true
-            sleep 0.5
-            kill -9 "$pid" 2>/dev/null || true
+        if process_is_owned "$pid_file"; then
+            process_stop_owned "$pid_file" || return 8
         fi
-        rm -f "$pid_file"
+        rm -f "$pid_file" "$pid_file.identity.json"
     fi
 
     rm -f "$TUNNEL_STATE_DIR/${target}.json"
@@ -179,6 +186,8 @@ tunnel_stop() {
 # Status of tunnel
 tunnel_status() {
     local target="${1:-webterm}"
+    [[ "$target" =~ ^[0-9]+$ ]] && target="port-$target"
+    cyber_validate_name "$target" || return 2
     tunnel_init_dirs
 
     local meta_file="$TUNNEL_STATE_DIR/${target}.json"
@@ -211,6 +220,8 @@ tunnel_status() {
 # View tunnel logs
 tunnel_logs() {
     local target="${1:-webterm}"
+    [[ "$target" =~ ^[0-9]+$ ]] && target="port-$target"
+    cyber_validate_name "$target" || return 2
     local lines="${2:-50}"
     tunnel_init_dirs
 
@@ -228,6 +239,8 @@ handle_tunnel_cli() {
     local action="${1:-status}"
     shift || true
     local target="${1:-webterm}"
+    [[ "$target" =~ ^[0-9]+$ ]] && target="port-$target"
+    cyber_validate_name "$target" || return 2
     shift || true
 
     case "$action" in
@@ -258,4 +271,17 @@ handle_tunnel_cli() {
             return 1
             ;;
     esac
+}
+
+tunnel_quick_start() {
+    tunnel_start "${1:-7681}"
+}
+
+tunnel_url() {
+    local target="${1:-webterm}"
+    [[ "$target" =~ ^[0-9]+$ ]] && target="port-$target"
+    cyber_validate_name "$target" || return 2
+    tunnel_init_dirs
+    tunnel_is_running "$target" || return 3
+    python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["url"])' "$TUNNEL_STATE_DIR/$target.json"
 }

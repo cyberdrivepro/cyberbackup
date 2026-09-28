@@ -56,15 +56,16 @@ verify_archive_integrity() {
     [ ! -f "$archive" ] && { log_error "Archive not found: $archive"; return 1; }
 
     log_info "Verifying archive integrity: $(basename "$archive")"
-    if [[ "$archive" == *.tar.zst ]]; then
-        if have_command zstd; then
-            tar -I zstd -tf "$archive" >/dev/null || { log_error "Archive corrupted"; return 1; }
-        else
-            log_error "zstd not installed; cannot read .tar.zst archive"
-            return 1
-        fi
+    local compression
+    compression="$(get_archive_compression "$archive")"
+    _run_tar "$compression" -tf "$archive" >/dev/null || { log_error "Archive corrupted"; return 9; }
+    if [ -f "$archive.sha256" ]; then
+        local expected
+        expected="$(awk 'NR==1 {print $1}' "$archive.sha256")"
+        [[ "$expected" =~ ^[a-fA-F0-9]{64}$ ]] || return 9
+        verify_sha256 "$archive" "$expected" || return 9
     else
-        tar -tzf "$archive" >/dev/null || { log_error "Archive corrupted"; return 1; }
+        log_warn "Legacy archive has no checksum sidecar; content authenticity is unverified."
     fi
     log_ok "Archive integrity verified."
     return 0
