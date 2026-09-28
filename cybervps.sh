@@ -367,6 +367,10 @@ elif [ "${1:-}" = "session" ]; then
     shift
     handle_session_cli "$@"
     exit $?
+elif [ "${1:-}" = "service" ]; then
+    shift
+    handle_service_cli "$@"
+    exit $?
 elif [ "${1:-}" = "--menu" ] || [ -t 0 ]; then
     main_loop
 else
@@ -374,5 +378,6 @@ else
     echo "Non-interactive session. Use direct script execution via Bash:"
     echo "  bash backup-now.sh, bash restore.sh, bash fresh-install.sh, bash verify.sh"
     echo "  cybervps session <command>"
+    echo "  cybervps service <command>"
     exit 0
 fi
