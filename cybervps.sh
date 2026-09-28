@@ -23,6 +23,8 @@ source "$CYBERVPS_DIR/lib/execution.sh"
 source "$CYBERVPS_DIR/lib/cyberroot.sh"
 # shellcheck source=lib/sessions.sh
 source "$CYBERVPS_DIR/lib/sessions.sh"
+# shellcheck source=lib/persistence.sh
+source "$CYBERVPS_DIR/lib/persistence.sh"
 
 # Ensure user PATH includes user-space locations
 export PATH="$HOME/.local/bin:$HOME/bin:$HOME/apps/micromamba/envs/hosting/bin:$HOME/.cargo/bin:$HOME/go/bin:$HOME/apps/go/bin:$PATH"
@@ -371,6 +373,10 @@ elif [ "${1:-}" = "service" ]; then
     shift
     handle_service_cli "$@"
     exit $?
+elif [ "${1:-}" = "persistence" ]; then
+    shift
+    handle_persistence_cli "$@"
+    exit $?
 elif [ "${1:-}" = "--menu" ] || [ -t 0 ]; then
     main_loop
 else
@@ -379,5 +385,6 @@ else
     echo "  bash backup-now.sh, bash restore.sh, bash fresh-install.sh, bash verify.sh"
     echo "  cybervps session <command>"
     echo "  cybervps service <command>"
+    echo "  cybervps persistence <command>"
     exit 0
 fi

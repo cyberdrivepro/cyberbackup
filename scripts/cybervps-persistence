@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# scripts/cybervps-persistence — CyberVPS Recovery & Persistence Engine CLI Wrapper
+set -euo pipefail
+
+CYBERVPS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/persistence.sh
+source "$CYBERVPS_DIR/lib/persistence.sh"
+
+handle_persistence_cli "$@"
