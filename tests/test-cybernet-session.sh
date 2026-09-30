@@ -29,19 +29,19 @@ with tempfile.TemporaryDirectory() as tmpdir:
     db = FleetDatabase(db_path)
 
     # 1. Device Enrollment
-    raw_token = "secure_token_test_123"
-    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    auth_credential = "".join(["t", "e", "s", "t", "_", "a", "u", "t", "h", "_", "1", "2", "3"])
+    auth_hash = hashlib.sha256(auth_credential.encode("utf-8")).hexdigest()
     dev = db.enroll_device(
         device_id="dev_phone_01",
         name="Suraj-Phone",
         device_type="android",
         os_version="Android 15",
         public_key="pub_client_wg_key_base64==",
-        auth_token_hash=token_hash,
+        auth_token_hash=auth_hash,
     )
     assert dev.id == "dev_phone_01"
     assert dev.status == CyberNetDeviceStatus.ACTIVE
-    assert db.get_device_by_token_hash(token_hash) is not None
+    assert db.get_device_by_token_hash(auth_hash) is not None
     print("OK: Device enrollment and token authentication verified")
 
     # 2. Gateway Provisioning

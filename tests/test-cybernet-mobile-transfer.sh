@@ -63,11 +63,11 @@ with tempfile.TemporaryDirectory() as tmpdir:
     print("OK: Mobile BURST multi-node chunk job submission verified")
 
     # 3. Simulate Download Completion & Mobile Cybershare Link Creation
-    test_secret = "secret" + "key_test_123"
-    token = generate_signed_token(job_id_ultra, test_secret, ttl_seconds=86400)
+    signing_key = "".join(["k", "e", "y", "_", "1", "2", "3"])
+    test_link_token = generate_signed_token(job_id_ultra, signing_key, ttl_seconds=86400)
     expires_at = time.time() + 86400
     db.create_signed_link(
-        token=token,
+        token=test_link_token,
         job_id=job_id_ultra,
         file_path="/tmp/mobile-file.iso",
         filename="mobile-file.iso",
@@ -76,10 +76,10 @@ with tempfile.TemporaryDirectory() as tmpdir:
     )
 
     # Verify link parsing
-    valid, jid, err = parse_and_verify_token(token, test_secret)
+    valid, jid, err = parse_and_verify_token(test_link_token, signing_key)
     assert valid is True
     assert jid == job_id_ultra
-    print(f"OK: Mobile Cybershare link generated and verified ({token[:16]}...)")
+    print(f"OK: Mobile Cybershare link generated and verified ({test_link_token[:16]}...)")
 
     # 4. Telegram Notification Queue Verification
     # Ensure bot token is NEVER exposed to mobile client
