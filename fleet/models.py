@@ -296,3 +296,108 @@ class BenchmarkReport(BaseModel):
     provider: str = "internal"
     duration_seconds: float = 5.0
 
+
+# =====================================================================
+# Phase 3: CyberNet Full-Device VPN & Mobile Control Models
+# =====================================================================
+
+class CyberNetScoreProfile(str, Enum):
+    BALANCED = "BALANCED"
+    LOW_LATENCY = "LOW_LATENCY"
+    MAX_THROUGHPUT = "MAX_THROUGHPUT"
+    STREAMING = "STREAMING"
+    MANUAL = "MANUAL"
+
+
+class CyberNetDeviceStatus(str, Enum):
+    ACTIVE = "ACTIVE"
+    REVOKED = "REVOKED"
+
+
+class CyberNetProtocol(str, Enum):
+    WIREGUARD = "WIREGUARD"
+    SSH_TUN2SOCKS = "SSH_TUN2SOCKS"
+
+
+class CyberNetSessionStatus(str, Enum):
+    ACTIVE = "ACTIVE"
+    TERMINATED = "TERMINATED"
+    FAILED_OVER = "FAILED_OVER"
+
+
+class CyberNetDevice(BaseModel):
+    id: str
+    name: str
+    device_type: str = "android"
+    os_version: str = "Android 15"
+    public_key: str
+    status: CyberNetDeviceStatus = CyberNetDeviceStatus.ACTIVE
+    enrolled_at: float = Field(default_factory=time.time)
+    last_seen_at: float = Field(default_factory=time.time)
+    auth_token_hash: str
+
+
+class CyberNetGatewayInfo(BaseModel):
+    node_id: str
+    enabled: bool = True
+    wireguard_enabled: bool = True
+    wireguard_port: int = 51820
+    wireguard_public_key: str = ""
+    wireguard_subnet: str = "10.66.0.0/24"
+    ssh_enabled: bool = True
+    ssh_port: int = 22
+    udp_supported: bool = True
+    ipv4_address: str = ""
+    ipv6_address: Optional[str] = None
+    region: str = "NL"
+    latency_ms: float = 0.0
+    packet_loss: float = 0.0
+    active_sessions: int = 0
+    tunnel_rx_bytes: int = 0
+    tunnel_tx_bytes: int = 0
+    gateway_score: float = 0.0
+
+
+class CyberNetSessionRecord(BaseModel):
+    session_id: str
+    device_id: str
+    gateway_node_id: str
+    protocol: CyberNetProtocol = CyberNetProtocol.WIREGUARD
+    assigned_ip: str = "10.66.0.2"
+    start_time: float = Field(default_factory=time.time)
+    end_time: Optional[float] = None
+    status: CyberNetSessionStatus = CyberNetSessionStatus.ACTIVE
+    bytes_rx: int = 0
+    bytes_tx: int = 0
+    disconnect_reason: Optional[str] = None
+
+
+class CyberNetEnrollRequest(BaseModel):
+    name: str
+    device_type: str = "android"
+    os_version: str = "Android 15"
+    public_key: str
+
+
+class CyberNetSessionRequest(BaseModel):
+    device_id: str
+    protocol: Optional[str] = "AUTO"
+    score_profile: str = "BALANCED"
+    gateway_id: Optional[str] = None
+    dns_mode: str = "CLOUDFLARE"
+    custom_dns: Optional[str] = None
+    full_tunnel: bool = True
+
+
+class CyberNetSessionResponse(BaseModel):
+    session_id: str
+    gateway_id: str
+    gateway_name: str
+    gateway_region: str
+    protocol: str
+    assigned_ip: str
+    dns_servers: List[str]
+    wireguard_config: Optional[str] = None
+    ssh_config: Optional[Dict[str, Any]] = None
+    backup_gateways: List[Dict[str, Any]] = Field(default_factory=list)
+

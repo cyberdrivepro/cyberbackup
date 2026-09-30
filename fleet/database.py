@@ -13,6 +13,8 @@ from fleet.models import (
     JobRecord, JobStatus, JobMode, NodeRecord, NodeStatus,
     DownloadChunk, ChunkStatus, TransferTicket,
     StorageObject, StorageReplica, StoredFile, StoredFileChunk,
+    CyberNetDevice, CyberNetGatewayInfo, CyberNetSessionRecord,
+    CyberNetDeviceStatus, CyberNetSessionStatus, CyberNetProtocol,
 )
 
 
@@ -231,6 +233,56 @@ class FleetDatabase:
                 FOREIGN KEY (object_hash) REFERENCES storage_objects(object_hash)
             );
 
+            CREATE TABLE IF NOT EXISTS cybernet_devices (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                device_type TEXT NOT NULL DEFAULT 'android',
+                os_version TEXT NOT NULL DEFAULT 'Android 15',
+                public_key TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'ACTIVE',
+                enrolled_at REAL NOT NULL,
+                last_seen_at REAL NOT NULL,
+                auth_token_hash TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS cybernet_gateways (
+                node_id TEXT PRIMARY KEY,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                wireguard_enabled INTEGER NOT NULL DEFAULT 1,
+                wireguard_port INTEGER NOT NULL DEFAULT 51820,
+                wireguard_public_key TEXT NOT NULL DEFAULT '',
+                wireguard_subnet TEXT NOT NULL DEFAULT '10.66.0.0/24',
+                ssh_enabled INTEGER NOT NULL DEFAULT 1,
+                ssh_port INTEGER NOT NULL DEFAULT 22,
+                udp_supported INTEGER NOT NULL DEFAULT 1,
+                ipv4_address TEXT NOT NULL DEFAULT '',
+                ipv6_address TEXT,
+                region TEXT NOT NULL DEFAULT 'NL',
+                latency_ms REAL NOT NULL DEFAULT 0.0,
+                packet_loss REAL NOT NULL DEFAULT 0.0,
+                active_sessions INTEGER NOT NULL DEFAULT 0,
+                tunnel_rx_bytes INTEGER NOT NULL DEFAULT 0,
+                tunnel_tx_bytes INTEGER NOT NULL DEFAULT 0,
+                gateway_score REAL NOT NULL DEFAULT 0.0,
+                FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS cybernet_sessions (
+                session_id TEXT PRIMARY KEY,
+                device_id TEXT NOT NULL,
+                gateway_node_id TEXT NOT NULL,
+                protocol TEXT NOT NULL DEFAULT 'WIREGUARD',
+                assigned_ip TEXT NOT NULL DEFAULT '10.66.0.2',
+                start_time REAL NOT NULL,
+                end_time REAL,
+                status TEXT NOT NULL DEFAULT 'ACTIVE',
+                bytes_rx INTEGER NOT NULL DEFAULT 0,
+                bytes_tx INTEGER NOT NULL DEFAULT 0,
+                disconnect_reason TEXT,
+                FOREIGN KEY (device_id) REFERENCES cybernet_devices(id),
+                FOREIGN KEY (gateway_node_id) REFERENCES nodes(id)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_nodes_status ON nodes(status);
             CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
             CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
@@ -240,6 +292,10 @@ class FleetDatabase:
             CREATE INDEX IF NOT EXISTS idx_chunks_node ON chunks(node_id);
             CREATE INDEX IF NOT EXISTS idx_storage_replicas_node ON storage_replicas(node_id);
             CREATE INDEX IF NOT EXISTS idx_storage_replicas_hash ON storage_replicas(object_hash);
+            CREATE INDEX IF NOT EXISTS idx_cybernet_devices_status ON cybernet_devices(status);
+            CREATE INDEX IF NOT EXISTS idx_cybernet_sessions_device ON cybernet_sessions(device_id);
+            CREATE INDEX IF NOT EXISTS idx_cybernet_sessions_status ON cybernet_sessions(status);
+            CREATE INDEX IF NOT EXISTS idx_cybernet_sessions_gateway ON cybernet_sessions(gateway_node_id);
             """)
 
             # Column migrations for existing databases
@@ -1106,3 +1162,380 @@ class FleetDatabase:
             conn.execute("UPDATE nodes SET status = 'REVOKED', is_drained = 1 WHERE id = ?", (node_id,))
             conn.commit()
             return True, f"Node {node_id} removed safely ({len(rep_rows)} replicas cleaned up)."
+
+    # =================================================================
+    # Phase 3: CyberNet Operations
+    # =================================================================
+
+    def enroll_device(
+        self,
+        device_id: str,
+        name: str,
+        device_type: str,
+        os_version: str,
+        public_key: str,
+        auth_token_hash: str,
+    ) -> CyberNetDevice:
+        now = time.time()
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO cybernet_devices (id, name, device_type, os_version, public_key, status, enrolled_at, last_seen_at, auth_token_hash)
+                VALUES (?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    name = excluded.name,
+                    device_type = excluded.device_type,
+                    os_version = excluded.os_version,
+                    public_key = excluded.public_key,
+                    status = 'ACTIVE',
+                    last_seen_at = excluded.last_seen_at,
+                    auth_token_hash = excluded.auth_token_hash
+                """,
+                (device_id, name, device_type, os_version, public_key, now, now, auth_token_hash),
+            )
+            conn.commit()
+        return self.get_device(device_id)
+
+    def get_device(self, device_id: str) -> Optional[CyberNetDevice]:
+        with self.connection() as conn:
+            row = conn.execute("SELECT * FROM cybernet_devices WHERE id = ?", (device_id,)).fetchone()
+            if not row:
+                return None
+            return CyberNetDevice(
+                id=row["id"],
+                name=row["name"],
+                device_type=row["device_type"],
+                os_version=row["os_version"],
+                public_key=row["public_key"],
+                status=CyberNetDeviceStatus(row["status"]),
+                enrolled_at=row["enrolled_at"],
+                last_seen_at=row["last_seen_at"],
+                auth_token_hash=row["auth_token_hash"],
+            )
+
+    def get_device_by_token_hash(self, token_hash: str) -> Optional[CyberNetDevice]:
+        with self.connection() as conn:
+            row = conn.execute("SELECT * FROM cybernet_devices WHERE auth_token_hash = ? AND status = 'ACTIVE'", (token_hash,)).fetchone()
+            if not row:
+                return None
+            return CyberNetDevice(
+                id=row["id"],
+                name=row["name"],
+                device_type=row["device_type"],
+                os_version=row["os_version"],
+                public_key=row["public_key"],
+                status=CyberNetDeviceStatus(row["status"]),
+                enrolled_at=row["enrolled_at"],
+                last_seen_at=row["last_seen_at"],
+                auth_token_hash=row["auth_token_hash"],
+            )
+
+    def list_devices(self) -> List[CyberNetDevice]:
+        with self.connection() as conn:
+            rows = conn.execute("SELECT * FROM cybernet_devices ORDER BY enrolled_at DESC").fetchall()
+            return [
+                CyberNetDevice(
+                    id=r["id"],
+                    name=r["name"],
+                    device_type=r["device_type"],
+                    os_version=r["os_version"],
+                    public_key=r["public_key"],
+                    status=CyberNetDeviceStatus(r["status"]),
+                    enrolled_at=r["enrolled_at"],
+                    last_seen_at=r["last_seen_at"],
+                    auth_token_hash=r["auth_token_hash"],
+                )
+                for r in rows
+            ]
+
+    def revoke_device(self, device_id: str) -> bool:
+        with self.connection() as conn:
+            cur = conn.execute("UPDATE cybernet_devices SET status = 'REVOKED' WHERE id = ?", (device_id,))
+            conn.execute(
+                "UPDATE cybernet_sessions SET status = 'TERMINATED', end_time = ?, disconnect_reason = 'DEVICE_REVOKED' WHERE device_id = ? AND status = 'ACTIVE'",
+                (time.time(), device_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def update_device_last_seen(self, device_id: str):
+        with self.connection() as conn:
+            conn.execute("UPDATE cybernet_devices SET last_seen_at = ? WHERE id = ?", (time.time(), device_id))
+            conn.commit()
+
+    def set_gateway(
+        self,
+        node_id: str,
+        enabled: bool = True,
+        wireguard_enabled: bool = True,
+        wireguard_port: int = 51820,
+        wireguard_public_key: str = "",
+        wireguard_subnet: str = "10.66.0.0/24",
+        ssh_enabled: bool = True,
+        ssh_port: int = 22,
+        udp_supported: bool = True,
+        ipv4_address: str = "",
+        ipv6_address: Optional[str] = None,
+        region: str = "NL",
+        latency_ms: float = 0.0,
+        packet_loss: float = 0.0,
+    ) -> CyberNetGatewayInfo:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO cybernet_gateways (
+                    node_id, enabled, wireguard_enabled, wireguard_port, wireguard_public_key,
+                    wireguard_subnet, ssh_enabled, ssh_port, udp_supported, ipv4_address,
+                    ipv6_address, region, latency_ms, packet_loss
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(node_id) DO UPDATE SET
+                    enabled = excluded.enabled,
+                    wireguard_enabled = excluded.wireguard_enabled,
+                    wireguard_port = excluded.wireguard_port,
+                    wireguard_public_key = CASE WHEN excluded.wireguard_public_key != '' THEN excluded.wireguard_public_key ELSE cybernet_gateways.wireguard_public_key END,
+                    wireguard_subnet = excluded.wireguard_subnet,
+                    ssh_enabled = excluded.ssh_enabled,
+                    ssh_port = excluded.ssh_port,
+                    udp_supported = excluded.udp_supported,
+                    ipv4_address = CASE WHEN excluded.ipv4_address != '' THEN excluded.ipv4_address ELSE cybernet_gateways.ipv4_address END,
+                    ipv6_address = excluded.ipv6_address,
+                    region = excluded.region,
+                    latency_ms = CASE WHEN excluded.latency_ms > 0 THEN excluded.latency_ms ELSE cybernet_gateways.latency_ms END,
+                    packet_loss = CASE WHEN excluded.packet_loss > 0 THEN excluded.packet_loss ELSE cybernet_gateways.packet_loss END
+                """,
+                (
+                    node_id, 1 if enabled else 0, 1 if wireguard_enabled else 0,
+                    wireguard_port, wireguard_public_key, wireguard_subnet,
+                    1 if ssh_enabled else 0, ssh_port, 1 if udp_supported else 0,
+                    ipv4_address, ipv6_address, region, latency_ms, packet_loss,
+                ),
+            )
+            conn.commit()
+        return self.get_gateway(node_id)
+
+    def get_gateway(self, node_id: str) -> Optional[CyberNetGatewayInfo]:
+        with self.connection() as conn:
+            row = conn.execute("SELECT * FROM cybernet_gateways WHERE node_id = ?", (node_id,)).fetchone()
+            if not row:
+                return None
+            return CyberNetGatewayInfo(
+                node_id=row["node_id"],
+                enabled=bool(row["enabled"]),
+                wireguard_enabled=bool(row["wireguard_enabled"]),
+                wireguard_port=row["wireguard_port"],
+                wireguard_public_key=row["wireguard_public_key"],
+                wireguard_subnet=row["wireguard_subnet"],
+                ssh_enabled=bool(row["ssh_enabled"]),
+                ssh_port=row["ssh_port"],
+                udp_supported=bool(row["udp_supported"]),
+                ipv4_address=row["ipv4_address"],
+                ipv6_address=row["ipv6_address"],
+                region=row["region"],
+                latency_ms=row["latency_ms"],
+                packet_loss=row["packet_loss"],
+                active_sessions=row["active_sessions"],
+                tunnel_rx_bytes=row["tunnel_rx_bytes"],
+                tunnel_tx_bytes=row["tunnel_tx_bytes"],
+                gateway_score=row["gateway_score"],
+            )
+
+    def list_gateways(self, only_enabled: bool = True) -> List[CyberNetGatewayInfo]:
+        with self.connection() as conn:
+            sql = "SELECT * FROM cybernet_gateways"
+            if only_enabled:
+                sql += " WHERE enabled = 1"
+            sql += " ORDER BY gateway_score DESC"
+            rows = conn.execute(sql).fetchall()
+            return [
+                CyberNetGatewayInfo(
+                    node_id=r["node_id"],
+                    enabled=bool(r["enabled"]),
+                    wireguard_enabled=bool(r["wireguard_enabled"]),
+                    wireguard_port=r["wireguard_port"],
+                    wireguard_public_key=r["wireguard_public_key"],
+                    wireguard_subnet=r["wireguard_subnet"],
+                    ssh_enabled=bool(r["ssh_enabled"]),
+                    ssh_port=r["ssh_port"],
+                    udp_supported=bool(r["udp_supported"]),
+                    ipv4_address=r["ipv4_address"],
+                    ipv6_address=r["ipv6_address"],
+                    region=r["region"],
+                    latency_ms=r["latency_ms"],
+                    packet_loss=r["packet_loss"],
+                    active_sessions=r["active_sessions"],
+                    tunnel_rx_bytes=r["tunnel_rx_bytes"],
+                    tunnel_tx_bytes=r["tunnel_tx_bytes"],
+                    gateway_score=r["gateway_score"],
+                )
+                for r in rows
+            ]
+
+    def update_gateway_telemetry(
+        self,
+        node_id: str,
+        latency_ms: float = 0.0,
+        packet_loss: float = 0.0,
+        active_sessions: int = 0,
+        tunnel_rx_bytes: int = 0,
+        tunnel_tx_bytes: int = 0,
+        gateway_score: float = 0.0,
+    ):
+        with self.connection() as conn:
+            conn.execute(
+                """
+                UPDATE cybernet_gateways SET
+                    latency_ms = ?,
+                    packet_loss = ?,
+                    active_sessions = ?,
+                    tunnel_rx_bytes = tunnel_rx_bytes + ?,
+                    tunnel_tx_bytes = tunnel_tx_bytes + ?,
+                    gateway_score = ?
+                WHERE node_id = ?
+                """,
+                (latency_ms, packet_loss, active_sessions, tunnel_rx_bytes, tunnel_tx_bytes, gateway_score, node_id),
+            )
+            conn.commit()
+
+    def create_session(
+        self,
+        session_id: str,
+        device_id: str,
+        gateway_node_id: str,
+        protocol: str = "WIREGUARD",
+        assigned_ip: str = "10.66.0.2",
+    ) -> CyberNetSessionRecord:
+        now = time.time()
+        with self.connection() as conn:
+            conn.execute(
+                "UPDATE cybernet_sessions SET status = 'TERMINATED', end_time = ?, disconnect_reason = 'NEW_SESSION' WHERE device_id = ? AND status = 'ACTIVE'",
+                (now, device_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO cybernet_sessions (session_id, device_id, gateway_node_id, protocol, assigned_ip, start_time, status)
+                VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE')
+                """,
+                (session_id, device_id, gateway_node_id, protocol, assigned_ip, now),
+            )
+            conn.execute(
+                "UPDATE cybernet_gateways SET active_sessions = active_sessions + 1 WHERE node_id = ?",
+                (gateway_node_id,),
+            )
+            conn.commit()
+        return self.get_session(session_id)
+
+    def get_session(self, session_id: str) -> Optional[CyberNetSessionRecord]:
+        with self.connection() as conn:
+            row = conn.execute("SELECT * FROM cybernet_sessions WHERE session_id = ?", (session_id,)).fetchone()
+            if not row:
+                return None
+            return CyberNetSessionRecord(
+                session_id=row["session_id"],
+                device_id=row["device_id"],
+                gateway_node_id=row["gateway_node_id"],
+                protocol=CyberNetProtocol(row["protocol"]),
+                assigned_ip=row["assigned_ip"],
+                start_time=row["start_time"],
+                end_time=row["end_time"],
+                status=CyberNetSessionStatus(row["status"]),
+                bytes_rx=row["bytes_rx"],
+                bytes_tx=row["bytes_tx"],
+                disconnect_reason=row["disconnect_reason"],
+            )
+
+    def get_active_session_for_device(self, device_id: str) -> Optional[CyberNetSessionRecord]:
+        with self.connection() as conn:
+            row = conn.execute("SELECT * FROM cybernet_sessions WHERE device_id = ? AND status = 'ACTIVE'", (device_id,)).fetchone()
+            if not row:
+                return None
+            return CyberNetSessionRecord(
+                session_id=row["session_id"],
+                device_id=row["device_id"],
+                gateway_node_id=row["gateway_node_id"],
+                protocol=CyberNetProtocol(row["protocol"]),
+                assigned_ip=row["assigned_ip"],
+                start_time=row["start_time"],
+                end_time=row["end_time"],
+                status=CyberNetSessionStatus(row["status"]),
+                bytes_rx=row["bytes_rx"],
+                bytes_tx=row["bytes_tx"],
+                disconnect_reason=row["disconnect_reason"],
+            )
+
+    def update_session_stats(self, session_id: str, bytes_rx: int, bytes_tx: int):
+        with self.connection() as conn:
+            conn.execute(
+                "UPDATE cybernet_sessions SET bytes_rx = ?, bytes_tx = ? WHERE session_id = ?",
+                (bytes_rx, bytes_tx, session_id),
+            )
+            conn.commit()
+
+    def terminate_session(self, session_id: str, disconnect_reason: str = "USER_DISCONNECT") -> bool:
+        now = time.time()
+        with self.connection() as conn:
+            sess = conn.execute("SELECT gateway_node_id, status FROM cybernet_sessions WHERE session_id = ?", (session_id,)).fetchone()
+            if not sess or sess["status"] != "ACTIVE":
+                return False
+            conn.execute(
+                "UPDATE cybernet_sessions SET status = 'TERMINATED', end_time = ?, disconnect_reason = ? WHERE session_id = ?",
+                (now, disconnect_reason, session_id),
+            )
+            conn.execute(
+                "UPDATE cybernet_gateways SET active_sessions = MAX(0, active_sessions - 1) WHERE node_id = ?",
+                (sess["gateway_node_id"],),
+            )
+            conn.commit()
+            return True
+
+    def list_sessions(self, limit: int = 50) -> List[CyberNetSessionRecord]:
+        with self.connection() as conn:
+            rows = conn.execute("SELECT * FROM cybernet_sessions ORDER BY start_time DESC LIMIT ?", (limit,)).fetchall()
+            return [
+                CyberNetSessionRecord(
+                    session_id=r["session_id"],
+                    device_id=r["device_id"],
+                    gateway_node_id=r["gateway_node_id"],
+                    protocol=CyberNetProtocol(r["protocol"]),
+                    assigned_ip=r["assigned_ip"],
+                    start_time=r["start_time"],
+                    end_time=r["end_time"],
+                    status=CyberNetSessionStatus(r["status"]),
+                    bytes_rx=r["bytes_rx"],
+                    bytes_tx=r["bytes_tx"],
+                    disconnect_reason=r["disconnect_reason"],
+                )
+                for r in rows
+            ]
+
+    def get_cybernet_summary(self) -> Dict[str, Any]:
+        with self.connection() as conn:
+            total_devs = conn.execute("SELECT COUNT(*) as c FROM cybernet_devices WHERE status = 'ACTIVE'").fetchone()["c"]
+            online_devs = conn.execute("SELECT COUNT(DISTINCT device_id) as c FROM cybernet_sessions WHERE status = 'ACTIVE'").fetchone()["c"]
+            total_gws = conn.execute("SELECT COUNT(*) as c FROM cybernet_gateways WHERE enabled = 1").fetchone()["c"]
+            healthy_gws = conn.execute(
+                """
+                SELECT COUNT(*) as c FROM cybernet_gateways g
+                JOIN nodes n ON g.node_id = n.id
+                WHERE g.enabled = 1 AND n.status = 'ONLINE'
+                """
+            ).fetchone()["c"]
+            total_sessions = conn.execute("SELECT COUNT(*) as c FROM cybernet_sessions").fetchone()["c"]
+            active_sessions = conn.execute("SELECT COUNT(*) as c FROM cybernet_sessions WHERE status = 'ACTIVE'").fetchone()["c"]
+            
+            traffic = conn.execute(
+                "SELECT SUM(tunnel_rx_bytes) as rx, SUM(tunnel_tx_bytes) as tx FROM cybernet_gateways"
+            ).fetchone()
+            vpn_rx = traffic["rx"] or 0
+            vpn_tx = traffic["tx"] or 0
+
+            return {
+                "devices_total": total_devs,
+                "devices_connected": online_devs,
+                "gateways_total": total_gws,
+                "gateways_healthy": healthy_gws,
+                "sessions_total": total_sessions,
+                "sessions_active": active_sessions,
+                "fleet_vpn_rx_bytes": vpn_rx,
+                "fleet_vpn_tx_bytes": vpn_tx,
+            }
+

@@ -535,6 +535,178 @@ def handle_store_cli(argv: list) -> int:
         return 0
 
 
+def handle_net_cli(argv: list) -> int:
+    parser = argparse.ArgumentParser(prog="cybervps net", description="CyberNet Full-Device VPN & Mobile Gateways")
+    subparsers = parser.add_subparsers(dest="net_action")
+
+    # status
+    subparsers.add_parser("status")
+
+    # gateways
+    gw_p = subparsers.add_parser("gateways")
+    gw_p.add_argument("--profile", default="BALANCED", help="Scoring profile (BALANCED, LOW_LATENCY, MAX_THROUGHPUT, STREAMING)")
+
+    # gateway
+    gw_cmd = subparsers.add_parser("gateway")
+    gw_sub = gw_cmd.add_subparsers(dest="gateway_action")
+    gw_enable = gw_sub.add_parser("enable")
+    gw_enable.add_argument("node_id", help="Node ID to enable as gateway")
+    gw_disable = gw_sub.add_parser("disable")
+    gw_disable.add_argument("node_id", help="Node ID to disable")
+    gw_sub.add_parser("status")
+
+    # sessions
+    subparsers.add_parser("sessions")
+
+    # devices
+    subparsers.add_parser("devices")
+
+    # revoke
+    rev_p = subparsers.add_parser("revoke")
+    rev_p.add_argument("device_id", help="Device ID to revoke")
+
+    # doctor
+    subparsers.add_parser("doctor")
+
+    # benchmark
+    bm_p = subparsers.add_parser("benchmark")
+    bm_p.add_argument("gateway_id", help="Gateway Node ID to benchmark")
+
+    args = parser.parse_args(argv)
+    db = FleetDatabase()
+
+    if args.net_action == "status":
+        print_header("CyberNet Full-Device VPN Status")
+        summary = db.get_cybernet_summary()
+        print(f"Connected Devices:  {summary['devices_connected']} / {summary['devices_total']}")
+        print(f"Active Gateways:    {summary['gateways_healthy']} / {summary['gateways_total']}")
+        print(f"Active Sessions:    {summary['sessions_active']}")
+        print(f"Total Sessions:     {summary['sessions_total']}")
+        print(f"Tunnel Traffic RX:  {summary['fleet_vpn_rx_bytes'] / (1024**2):.2f} MB")
+        print(f"Tunnel Traffic TX:  {summary['fleet_vpn_tx_bytes'] / (1024**2):.2f} MB")
+        return 0
+
+    elif args.net_action == "gateways":
+        print_header("CyberNet Fleet Gateways")
+        from fleet.cybernet import calculate_gateway_score
+        from fleet.models import CyberNetScoreProfile, NodeRecord
+
+        try:
+            profile = CyberNetScoreProfile(args.profile.upper())
+        except Exception:
+            profile = CyberNetScoreProfile.BALANCED
+
+        gateways = db.list_gateways(only_enabled=False)
+        nodes = {n["id"]: NodeRecord(**n) for n in db.list_nodes()}
+
+        if not gateways:
+            print_warn("No gateway nodes found. Enable one with: cybervps net gateway enable <node_id>")
+            return 0
+
+        print(f"{'NODE ID':<16} {'NAME':<16} {'REGION':<8} {'IP':<16} {'LATENCY':<10} {'SESSIONS':<10} {'SCORE':<8} {'STATUS'}")
+        print("-" * 92)
+        for gw in gateways:
+            node = nodes.get(gw.node_id)
+            score = calculate_gateway_score(gw, node, profile)
+            node_name = node.name if node else gw.node_id
+            status_str = "\033[1;32mENABLED\033[0m" if gw.enabled else "\033[1;30mDISABLED\033[0m"
+            print(f"{gw.node_id:<16} {node_name:<16} {gw.region:<8} {gw.ipv4_address:<16} {gw.latency_ms:<10.1f} {gw.active_sessions:<10} {score:<8.1f} {status_str}")
+        return 0
+
+    elif args.net_action == "gateway":
+        if args.gateway_action == "enable":
+            node = db.get_node(args.node_id)
+            if not node:
+                print_fail(f"Node not found: {args.node_id}")
+                return 1
+            gw = db.set_gateway(
+                node_id=args.node_id,
+                enabled=True,
+                ipv4_address=node.get("hostname", "127.0.0.1"),
+                region=node.get("region") or "NL",
+            )
+            print_ok(f"Enabled CyberNet gateway on node {args.node_id} ({node['name']})")
+            return 0
+        elif args.gateway_action == "disable":
+            db.set_gateway(node_id=args.node_id, enabled=False)
+            print_ok(f"Disabled CyberNet gateway on node {args.node_id}")
+            return 0
+        else:
+            print("Usage: cybervps net gateway {enable|disable} <node_id>")
+            return 1
+
+    elif args.net_action == "devices":
+        print_header("Enrolled CyberNet Mobile Devices")
+        devices = db.list_devices()
+        if not devices:
+            print_warn("No mobile devices enrolled yet.")
+            return 0
+        print(f"{'DEVICE ID':<18} {'NAME':<18} {'OS':<16} {'STATUS':<10} {'LAST SEEN'}")
+        print("-" * 75)
+        for d in devices:
+            st = "\033[1;32mACTIVE\033[0m" if d.status.value == "ACTIVE" else "\033[1;31mREVOKED\033[0m"
+            print(f"{d.id:<18} {d.name:<18} {d.os_version:<16} {st:<19} {time.strftime('%Y-%m-%d %H:%M', time.localtime(d.last_seen_at))}")
+        return 0
+
+    elif args.net_action == "sessions":
+        print_header("CyberNet VPN Sessions")
+        sessions = db.list_sessions(limit=30)
+        if not sessions:
+            print_warn("No VPN sessions recorded.")
+            return 0
+        print(f"{'SESSION ID':<18} {'DEVICE ID':<16} {'GATEWAY':<16} {'PROTOCOL':<12} {'ASSIGNED IP':<14} {'STATUS'}")
+        print("-" * 88)
+        for s in sessions:
+            st = "\033[1;32mACTIVE\033[0m" if s.status.value == "ACTIVE" else s.status.value
+            print(f"{s.session_id:<18} {s.device_id:<16} {s.gateway_node_id:<16} {s.protocol.value:<12} {s.assigned_ip:<14} {st}")
+        return 0
+
+    elif args.net_action == "revoke":
+        ok = db.revoke_device(args.device_id)
+        if ok:
+            print_ok(f"Device {args.device_id} successfully revoked. Active sessions terminated.")
+            return 0
+        else:
+            print_fail(f"Device {args.device_id} not found.")
+            return 1
+
+    elif args.net_action == "doctor":
+        print_header("CyberNet Diagnostics Doctor")
+        from fleet.doctor import CyberNetDoctor
+        checks = CyberNetDoctor.run_all()
+        for c in checks:
+            if c["status"] == "PASS":
+                print_ok(f"{c['name']}: {c['detail']}")
+            elif c["status"] == "WARN":
+                print_warn(f"{c['name']}: {c['detail']}")
+            else:
+                print_fail(f"{c['name']}: {c['detail']}")
+        return 0
+
+    elif args.net_action == "benchmark":
+        print_header(f"Benchmarking CyberNet Gateway: {args.gateway_id}")
+        gw = db.get_gateway(args.gateway_id)
+        if not gw:
+            print_fail(f"Gateway {args.gateway_id} not found.")
+            return 1
+        print_ok(f"Testing connectivity to {gw.ipv4_address}:{gw.wireguard_port}...")
+        start = time.time()
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.settimeout(2.0)
+            s.sendto(b"\x01\x00\x00\x00", (gw.ipv4_address, gw.wireguard_port))
+            lat = (time.time() - start) * 1000
+            s.close()
+            print_ok(f"Roundtrip probe: {lat:.1f} ms | Score: {gw.gateway_score}")
+        except Exception as e:
+            print_warn(f"Probe latency measurement warning: {e}")
+        return 0
+
+    else:
+        parser.print_help()
+        return 0
+
+
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "fleet":
         sys.exit(handle_fleet_cli(sys.argv[2:]))
@@ -542,10 +714,13 @@ def main():
         sys.exit(handle_transfer_cli(sys.argv[2:]))
     elif len(sys.argv) > 1 and sys.argv[1] == "store":
         sys.exit(handle_store_cli(sys.argv[2:]))
+    elif len(sys.argv) > 1 and sys.argv[1] == "net":
+        sys.exit(handle_net_cli(sys.argv[2:]))
     else:
-        print("Usage: python3 -m fleet.cli {fleet|transfer|store} ...")
+        print("Usage: python3 -m fleet.cli {fleet|transfer|store|net} ...")
         sys.exit(1)
 
 
 if __name__ == "__main__":
     main()
+

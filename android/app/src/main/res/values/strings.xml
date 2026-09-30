@@ -1,0 +1,12 @@
+<resources>
+    <string name="app_name">CyberNet</string>
+    <string name="status_disconnected">DISCONNECTED</string>
+    <string name="status_connecting">CONNECTING...</string>
+    <string name="status_connected">CONNECTED</string>
+    <string name="connect">CONNECT</string>
+    <string name="disconnect">DISCONNECT</string>
+    <string name="protocol_wireguard">WireGuard</string>
+    <string name="protocol_ssh">SSH / Tun2Socks</string>
+    <string name="channel_vpn_name">CyberNet VPN Status</string>
+    <string name="channel_vpn_desc">Persistent notification showing live VPN throughput and gateway latency.</string>
+</resources>

@@ -45,6 +45,8 @@ source "$CYBERVPS_DIR/lib/public.sh"
 source "$CYBERVPS_DIR/lib/fleet.sh"
 # shellcheck source=lib/transfer.sh
 source "$CYBERVPS_DIR/lib/transfer.sh"
+# shellcheck source=lib/cybernet.sh
+source "$CYBERVPS_DIR/lib/cybernet.sh"
 source "$CYBERVPS_DIR/lib/cli.sh"
 
 # Ensure user PATH includes user-space locations
@@ -929,6 +931,9 @@ main_loop() {
             [tT]*)
                 handle_transfer_submenu
                 ;;
+            [nN]*)
+                handle_cybernet_submenu
+                ;;
             [dD]*)
                 handle_diagnostics_menu
                 ;;
@@ -1023,6 +1028,10 @@ elif [ "${1:-}" = "transfer" ]; then
 elif [ "${1:-}" = "store" ]; then
     shift
     cybervps_store_cli "$@"
+    exit $?
+elif [ "${1:-}" = "net" ]; then
+    shift
+    cybervps_net_cli "$@"
     exit $?
 elif [ "$#" -gt 0 ] && [ "${1:-}" != "--menu" ]; then
     cyber_control_cli "$@"

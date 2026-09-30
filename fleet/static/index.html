@@ -14,7 +14,7 @@
     <div class="brand">
       <div class="logo-icon">⚡</div>
       <div class="brand-text">CYBERVPS <span style="color: var(--primary);">TRANSFER</span></div>
-      <div class="brand-badge">PHASE 2 • BURST + STORE</div>
+      <div class="brand-badge">PHASE 3 • CYBERNET VPN + FLEET</div>
     </div>
     <div class="header-status">
       <div class="connection-pill">
@@ -177,6 +177,65 @@
           </thead>
           <tbody id="store-files-body">
             <tr><td colspan="5" style="text-align: center; color: var(--text-dim); padding: 1.5rem;">No files ingested into CyberStore yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- CyberNet Full-Device VPN & Mobile Fleet Gateways Section -->
+    <section>
+      <div class="section-header">
+        <div class="section-title">🌐 CyberNet Full-Device VPN & Mobile Gateways</div>
+        <div style="display: flex; gap: 0.5rem;">
+          <button class="action-btn" onclick="triggerCyberNetDoctor()" title="Run CyberNet Doctor">DIAGNOSTICS</button>
+          <button class="action-btn" onclick="fetchCyberNet()" title="Refresh CyberNet">REFRESH</button>
+        </div>
+      </div>
+      <div class="overview-grid" style="margin-bottom: 1rem;">
+        <div class="metric-card">
+          <div class="metric-label">Connected Devices</div>
+          <div class="metric-value" id="net-stat-devices">0 / 0</div>
+          <div class="metric-sub">Android & Mobile Clients</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Active Gateways</div>
+          <div class="metric-value" id="net-stat-gateways">0 / 0</div>
+          <div class="metric-sub">WireGuard & SSH Enabled</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">VPN Throughput (RX / TX)</div>
+          <div class="metric-value" id="net-stat-traffic">0 Mbps</div>
+          <div class="metric-sub" id="net-stat-traffic-sub">Real-time Tunnel Traffic</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Active Sessions</div>
+          <div class="metric-value" id="net-stat-sessions">0</div>
+          <div class="metric-sub">Live VPN Connections</div>
+        </div>
+      </div>
+
+      <!-- CyberNet Gateways Grid -->
+      <div class="section-title" style="font-size: 0.95rem; margin-bottom: 0.75rem;">🛡️ Gateway Nodes (Auto-Scored)</div>
+      <div class="nodes-grid" id="net-gateways-container" style="margin-bottom: 1.5rem;">
+        <div style="color: var(--text-dim); font-size: 0.85rem; padding: 1rem;">Loading gateways...</div>
+      </div>
+
+      <!-- Enrolled Mobile Devices Table -->
+      <div class="section-title" style="font-size: 0.95rem; margin-bottom: 0.75rem;">📱 Enrolled Mobile Devices</div>
+      <div class="transfers-container">
+        <table class="transfers-table">
+          <thead>
+            <tr>
+              <th>Device Name / ID</th>
+              <th>OS / Platform</th>
+              <th>Status</th>
+              <th>Enrolled</th>
+              <th>Last Seen</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="net-devices-body">
+            <tr><td colspan="6" style="text-align: center; color: var(--text-dim); padding: 1.5rem;">No devices enrolled yet. Enroll via CyberNet Android app.</td></tr>
           </tbody>
         </table>
       </div>

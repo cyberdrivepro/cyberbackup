@@ -55,7 +55,23 @@ from fleet.models import (
     StorageObject,
     StoredFile,
     TransferTicket,
+    CyberNetDevice,
+    CyberNetGatewayInfo,
+    CyberNetSessionRecord,
+    CyberNetEnrollRequest,
+    CyberNetSessionRequest,
+    CyberNetSessionResponse,
+    CyberNetScoreProfile,
 )
+from fleet.cybernet import (
+    calculate_gateway_score,
+    select_best_gateways,
+    allocate_client_ip,
+    generate_wireguard_client_config,
+    generate_ssh_tunnel_config,
+    resolve_dns_preset,
+)
+from fleet.doctor import CyberNetDoctor
 from fleet.probe import probe_url
 from fleet.scheduler import select_best_node
 from fleet.ssrf import validate_url
@@ -1202,6 +1218,350 @@ async def websocket_dashboard_endpoint(websocket: WebSocket):
         WS_MANAGER.disconnect(websocket)
     except Exception:
         WS_MANAGER.disconnect(websocket)
+
+
+# =====================================================================
+# Phase 3: CyberNet API Endpoints
+# =====================================================================
+
+@app.post("/api/v1/net/devices/enroll")
+async def net_enroll_device(req: CyberNetEnrollRequest):
+    """
+    Enrolls a new CyberNet Android/client device.
+    Generates a unique device_id and secure auth token.
+    """
+    device_id = f"dev_{secrets.token_hex(6)}"
+    raw_token = secrets.token_hex(24)
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+    device = DB.enroll_device(
+        device_id=device_id,
+        name=req.name or f"Device-{device_id[:6]}",
+        device_type=req.device_type,
+        os_version=req.os_version,
+        public_key=req.public_key,
+        auth_token_hash=token_hash,
+    )
+    return {
+        "ok": True,
+        "device_id": device.id,
+        "token": raw_token,
+        "status": device.status.value,
+        "enrolled_at": device.enrolled_at,
+    }
+
+
+@app.get("/api/v1/net/devices")
+async def net_list_devices():
+    """Lists all enrolled CyberNet devices."""
+    devices = DB.list_devices()
+    return {"ok": True, "devices": [d.model_dump() for d in devices]}
+
+
+@app.post("/api/v1/net/devices/{device_id}/revoke")
+async def net_revoke_device(device_id: str):
+    """Revokes a CyberNet device and terminates all its active sessions."""
+    ok = DB.revoke_device(device_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Device not found")
+    return {"ok": True, "message": f"Device {device_id} revoked"}
+
+
+@app.get("/api/v1/net/gateways")
+async def net_list_gateways(profile: str = "BALANCED"):
+    """
+    Lists all gateway-capable nodes with their dynamic scores.
+    """
+    try:
+        score_prof = CyberNetScoreProfile(profile.upper())
+    except Exception:
+        score_prof = CyberNetScoreProfile.BALANCED
+
+    gateways = DB.list_gateways(only_enabled=False)
+    nodes = {n["id"]: NodeRecord(**n) for n in DB.list_nodes()}
+
+    result = []
+    for gw in gateways:
+        node = nodes.get(gw.node_id)
+        score = calculate_gateway_score(gw, node, score_prof)
+        gw.gateway_score = score
+        d = gw.model_dump()
+        d["node_name"] = node.name if node else "Unknown Node"
+        d["node_status"] = node.status.value if node else "UNKNOWN"
+        d["effective_ram_bytes"] = node.effective_ram_bytes if node else 0
+        d["last_benchmark_dl_bps"] = node.last_benchmark_dl_bps if node else 0.0
+        result.append(d)
+
+    result.sort(key=lambda x: x["gateway_score"], reverse=True)
+    return {"ok": True, "gateways": result, "profile": score_prof.value}
+
+
+@app.get("/api/v1/net/gateways/{node_id}")
+async def net_get_gateway(node_id: str):
+    """Returns telemetry and configuration details for a specific gateway."""
+    gw = DB.get_gateway(node_id)
+    if not gw:
+        raise HTTPException(status_code=404, detail="Gateway not found")
+    node = DB.get_node(node_id)
+    score = calculate_gateway_score(gw, NodeRecord(**node) if node else None)
+    d = gw.model_dump()
+    d["gateway_score"] = score
+    d["node_name"] = node["name"] if node else "Unknown Node"
+    d["node_status"] = node["status"] if node else "UNKNOWN"
+    return {"ok": True, "gateway": d}
+
+
+@app.post("/api/v1/net/gateways/{node_id}/enable")
+async def net_enable_gateway(node_id: str):
+    """Enables a fleet node as a CyberNet gateway."""
+    node = DB.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    gw = DB.set_gateway(
+        node_id=node_id,
+        enabled=True,
+        ipv4_address=node.get("hostname", "127.0.0.1"),
+        region=node.get("region") or "NL",
+    )
+    return {"ok": True, "gateway": gw.model_dump()}
+
+
+@app.post("/api/v1/net/gateways/{node_id}/disable")
+async def net_disable_gateway(node_id: str):
+    """Disables gateway mode on a fleet node."""
+    gw = DB.set_gateway(node_id=node_id, enabled=False)
+    return {"ok": True, "gateway": gw.model_dump()}
+
+
+@app.post("/api/v1/net/gateways/{node_id}/telemetry")
+async def net_update_telemetry(node_id: str, data: Dict[str, Any]):
+    """Called by Fleet Agent to report gateway metrics."""
+    DB.update_gateway_telemetry(
+        node_id=node_id,
+        latency_ms=float(data.get("latency_ms", 0.0)),
+        packet_loss=float(data.get("packet_loss", 0.0)),
+        active_sessions=int(data.get("active_sessions", 0)),
+        tunnel_rx_bytes=int(data.get("tunnel_rx_bytes", 0)),
+        tunnel_tx_bytes=int(data.get("tunnel_tx_bytes", 0)),
+        gateway_score=float(data.get("gateway_score", 0.0)),
+    )
+    return {"ok": True}
+
+
+@app.post("/api/v1/net/session")
+async def net_create_session(req: CyberNetSessionRequest):
+    """
+    Creates a new CyberNet VPN session.
+    Auto-selects optimal gateway (or validates manual gateway), assigns virtual IP,
+    and returns client WireGuard / SSH configuration with backup gateways.
+    """
+    device = DB.get_device(req.device_id)
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+    if device.status == CyberNetDeviceStatus.REVOKED:
+        raise HTTPException(status_code=403, detail="Device has been revoked")
+
+    try:
+        profile = CyberNetScoreProfile(req.score_profile.upper())
+    except Exception:
+        profile = CyberNetScoreProfile.BALANCED
+
+    gateways = DB.list_gateways(only_enabled=True)
+    if not gateways:
+        # Auto-provision first online node as gateway if none explicitly enabled
+        online_nodes = [n for n in DB.list_nodes() if n["status"] == "ONLINE"]
+        if online_nodes:
+            first_n = online_nodes[0]
+            gw = DB.set_gateway(
+                node_id=first_n["id"],
+                enabled=True,
+                ipv4_address=first_n.get("hostname", "127.0.0.1"),
+                region=first_n.get("region") or "NL",
+            )
+            gateways = [gw]
+        else:
+            raise HTTPException(status_code=503, detail="No online CyberNet gateways available")
+
+    nodes_by_id = {n["id"]: NodeRecord(**n) for n in DB.list_nodes()}
+    primary_gw, backup_gws = select_best_gateways(
+        gateways=gateways,
+        nodes_by_id=nodes_by_id,
+        profile=profile,
+        preferred_gateway_id=req.gateway_id,
+        limit=3,
+    )
+
+    if not primary_gw:
+        raise HTTPException(status_code=503, detail="No healthy gateway available for profile")
+
+    # Allocate IP in gateway subnet
+    active_sessions = DB.list_sessions(limit=200)
+    active_ips = [s.assigned_ip for s in active_sessions if s.status.value == "ACTIVE"]
+    client_ip = allocate_client_ip(primary_gw.wireguard_subnet, active_ips)
+
+    session_id = f"sess_{secrets.token_hex(8)}"
+    protocol = req.protocol.upper() if req.protocol else "AUTO"
+    if protocol == "AUTO":
+        protocol = "WIREGUARD" if primary_gw.wireguard_enabled else "SSH_TUN2SOCKS"
+
+    session = DB.create_session(
+        session_id=session_id,
+        device_id=device.id,
+        gateway_node_id=primary_gw.node_id,
+        protocol=protocol,
+        assigned_ip=client_ip,
+    )
+
+    dns_servers = resolve_dns_preset(req.dns_mode, req.custom_dns)
+    primary_node = nodes_by_id.get(primary_gw.node_id)
+    endpoint = f"{primary_gw.ipv4_address}:{primary_gw.wireguard_port}"
+
+    wg_config = None
+    if protocol == "WIREGUARD":
+        wg_config = generate_wireguard_client_config(
+            client_private_key="<DEVICE_KEYSTORE_PRIVATE_KEY>",
+            client_ip=client_ip,
+            gateway_public_key=primary_gw.wireguard_public_key or "pub_dummy_gw_key",
+            gateway_endpoint=endpoint,
+            dns_servers=dns_servers,
+            allowed_ips="0.0.0.0/0, ::/0" if req.full_tunnel else "10.66.0.0/24",
+        )
+
+    ssh_config = None
+    if protocol == "SSH_TUN2SOCKS" or primary_gw.ssh_enabled:
+        ssh_config = generate_ssh_tunnel_config(
+            gateway_host=primary_gw.ipv4_address,
+            ssh_port=primary_gw.ssh_port,
+            username="cybervps",
+            device_id=device.id,
+            dns_servers=dns_servers,
+        )
+
+    backups_data = []
+    for b in backup_gws:
+        b_node = nodes_by_id.get(b.node_id)
+        backups_data.append({
+            "gateway_id": b.node_id,
+            "name": b_node.name if b_node else b.node_id,
+            "region": b.region,
+            "endpoint": f"{b.ipv4_address}:{b.wireguard_port}",
+            "latency_ms": b.latency_ms,
+            "score": b.gateway_score,
+        })
+
+    DB.update_device_last_seen(device.id)
+
+    return CyberNetSessionResponse(
+        session_id=session.session_id,
+        gateway_id=primary_gw.node_id,
+        gateway_name=primary_node.name if primary_node else primary_gw.node_id,
+        gateway_region=primary_gw.region,
+        protocol=protocol,
+        assigned_ip=client_ip,
+        dns_servers=dns_servers,
+        wireguard_config=wg_config,
+        ssh_config=ssh_config,
+        backup_gateways=backups_data,
+    )
+
+
+@app.post("/api/v1/net/session/switch")
+async def net_switch_session(data: Dict[str, Any]):
+    """Switches an existing session to a replacement gateway (e.g. during failover)."""
+    session_id = data.get("session_id")
+    target_gw_id = data.get("target_gateway_id")
+    if not session_id or not target_gw_id:
+        raise HTTPException(status_code=400, detail="session_id and target_gateway_id required")
+
+    old_sess = DB.get_session(session_id)
+    if not old_sess or old_sess.status.value != "ACTIVE":
+        raise HTTPException(status_code=404, detail="Active session not found")
+
+    target_gw = DB.get_gateway(target_gw_id)
+    if not target_gw or not target_gw.enabled:
+        raise HTTPException(status_code=400, detail="Target gateway not available")
+
+    # Terminate old session and create replacement
+    DB.terminate_session(session_id, disconnect_reason="GATEWAY_SWITCH")
+    new_sess_id = f"sess_{secrets.token_hex(8)}"
+    new_sess = DB.create_session(
+        session_id=new_sess_id,
+        device_id=old_sess.device_id,
+        gateway_node_id=target_gw_id,
+        protocol=old_sess.protocol.value,
+        assigned_ip=old_sess.assigned_ip,
+    )
+
+    node = DB.get_node(target_gw_id)
+    return {
+        "ok": True,
+        "old_session_id": session_id,
+        "new_session_id": new_sess_id,
+        "gateway_id": target_gw_id,
+        "gateway_name": node["name"] if node else target_gw_id,
+        "endpoint": f"{target_gw.ipv4_address}:{target_gw.wireguard_port}",
+    }
+
+
+@app.delete("/api/v1/net/session/{session_id}")
+async def net_terminate_session(session_id: str):
+    """Terminates an active CyberNet VPN session."""
+    ok = DB.terminate_session(session_id, disconnect_reason="CLIENT_DISCONNECT")
+    return {"ok": ok, "session_id": session_id}
+
+
+@app.get("/api/v1/net/session/{session_id}/stats")
+async def net_session_stats(session_id: str):
+    """Returns current live counters for a session."""
+    sess = DB.get_session(session_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    gw = DB.get_gateway(sess.gateway_node_id)
+    return {
+        "ok": True,
+        "session_id": sess.session_id,
+        "device_id": sess.device_id,
+        "status": sess.status.value,
+        "protocol": sess.protocol.value,
+        "duration_seconds": time.time() - sess.start_time if sess.status.value == "ACTIVE" else ((sess.end_time or time.time()) - sess.start_time),
+        "bytes_rx": sess.bytes_rx,
+        "bytes_tx": sess.bytes_tx,
+        "gateway_latency_ms": gw.latency_ms if gw else 0.0,
+        "gateway_packet_loss": gw.packet_loss if gw else 0.0,
+    }
+
+
+@app.post("/api/v1/net/session/{session_id}/heartbeat")
+async def net_session_heartbeat(session_id: str, data: Dict[str, Any]):
+    """Updates session live RX/TX counters and refreshes device last_seen."""
+    sess = DB.get_session(session_id)
+    if not sess or sess.status.value != "ACTIVE":
+        raise HTTPException(status_code=404, detail="Active session not found")
+
+    rx = int(data.get("bytes_rx", sess.bytes_rx))
+    tx = int(data.get("bytes_tx", sess.bytes_tx))
+    DB.update_session_stats(session_id, rx, tx)
+    DB.update_device_last_seen(sess.device_id)
+    return {"ok": True}
+
+
+@app.get("/api/v1/net/summary")
+async def net_summary():
+    """Returns overview statistics for the Web Dashboard CyberNet tab."""
+    summary = DB.get_cybernet_summary()
+    return {"ok": True, "summary": summary}
+
+
+@app.get("/api/v1/net/doctor")
+async def net_doctor():
+    """Runs the CyberNet diagnostic doctor."""
+    results = CyberNetDoctor.run_all()
+    overall = "PASS"
+    if any(r["status"] == "FAIL" for r in results):
+        overall = "FAIL"
+    elif any(r["status"] == "WARN" for r in results):
+        overall = "WARN"
+    return {"ok": True, "overall": overall, "checks": results}
 
 
 def run_controller(host: str = "0.0.0.0", port: int = 8000):

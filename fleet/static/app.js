@@ -470,9 +470,170 @@ async function drainNode(nodeId, drained) {
   }
 }
 
+// =====================================================================
+// Phase 3: CyberNet Dashboard Client Functions
+// =====================================================================
+
+async function loadCyberNet() {
+  try {
+    const [summaryRes, gatewaysRes, devicesRes] = await Promise.all([
+      fetch('/api/v1/net/summary'),
+      fetch('/api/v1/net/gateways'),
+      fetch('/api/v1/net/devices')
+    ]);
+
+    if (summaryRes.ok) {
+      const { summary } = await summaryRes.json();
+      document.getElementById('net-stat-devices').innerText = `${summary.devices_connected || 0} / ${summary.devices_total || 0}`;
+      document.getElementById('net-stat-gateways').innerText = `${summary.gateways_healthy || 0} / ${summary.gateways_total || 0}`;
+      document.getElementById('net-stat-traffic').innerText = `${formatBytes(summary.fleet_vpn_rx_bytes || 0)} ↓ / ${formatBytes(summary.fleet_vpn_tx_bytes || 0)} ↑`;
+      document.getElementById('net-stat-sessions').innerText = summary.sessions_active || 0;
+    }
+
+    if (gatewaysRes.ok) {
+      const { gateways } = await gatewaysRes.json();
+      renderGateways(gateways || []);
+    }
+
+    if (devicesRes.ok) {
+      const { devices } = await devicesRes.json();
+      renderDevices(devices || []);
+    }
+  } catch (e) {
+    console.error('Error loading CyberNet data:', e);
+  }
+}
+
+function renderGateways(gateways) {
+  const container = document.getElementById('net-gateways-container');
+  if (!gateways || gateways.length === 0) {
+    container.innerHTML = '<div style="color: var(--text-dim); font-size: 0.85rem; padding: 1rem;">No gateway nodes configured. Enable via CLI: cybervps net gateway enable &lt;node&gt;</div>';
+    return;
+  }
+
+  container.innerHTML = gateways.map(gw => `
+    <div class="node-card ${gw.enabled ? 'node-online' : 'node-offline'}" style="position: relative;">
+      <div class="node-card-header">
+        <div>
+          <div style="font-weight: 700; font-size: 1.05rem;">${escapeHtml(gw.node_name || gw.node_id)}</div>
+          <div style="font-size: 0.75rem; color: var(--text-dim); font-family: var(--font-mono);">${gw.region} • ${gw.ipv4_address}</div>
+        </div>
+        <div style="text-align: right;">
+          <span class="badge ${gw.enabled ? 'badge-online' : 'badge-offline'}">${gw.enabled ? 'GATEWAY' : 'DISABLED'}</span>
+          <div style="font-size: 0.7rem; color: var(--primary); font-weight: 700; margin-top: 0.25rem;">Score: ${gw.gateway_score || 0}</div>
+        </div>
+      </div>
+      
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin: 0.75rem 0; font-size: 0.8rem;">
+        <div>
+          <span style="color: var(--text-dim);">Latency:</span> <strong>${(gw.latency_ms || 45).toFixed(1)} ms</strong>
+        </div>
+        <div>
+          <span style="color: var(--text-dim);">Loss:</span> <strong>${(gw.packet_loss || 0).toFixed(1)}%</strong>
+        </div>
+        <div>
+          <span style="color: var(--text-dim);">Sessions:</span> <strong>${gw.active_sessions || 0}</strong>
+        </div>
+        <div>
+          <span style="color: var(--text-dim);">Protocols:</span> <strong>${gw.wireguard_enabled ? 'WG' : ''}${gw.ssh_enabled ? '/SSH' : ''}</strong>
+        </div>
+      </div>
+
+      <div style="font-size: 0.75rem; color: var(--text-dim); margin-top: 0.5rem; display: flex; justify-content: space-between;">
+        <span>Tunnel RX: ${formatBytes(gw.tunnel_rx_bytes || 0)}</span>
+        <span>Tunnel TX: ${formatBytes(gw.tunnel_tx_bytes || 0)}</span>
+      </div>
+
+      <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem;">
+        <button class="action-btn" style="flex: 1;" onclick="toggleGateway('${gw.node_id}', ${!gw.enabled})">
+          ${gw.enabled ? 'DISABLE' : 'ENABLE'}
+        </button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderDevices(devices) {
+  const tbody = document.getElementById('net-devices-body');
+  if (!devices || devices.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-dim); padding: 1.5rem;">No devices enrolled yet. Enroll via CyberNet Android app.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = devices.map(d => `
+    <tr>
+      <td>
+        <div style="font-weight: 600;">${escapeHtml(d.name)}</div>
+        <div style="font-size: 0.75rem; color: var(--text-dim); font-family: var(--font-mono);">${d.id}</div>
+      </td>
+      <td>
+        <div>${escapeHtml(d.os_version || 'Android')}</div>
+        <div style="font-size: 0.7rem; color: var(--text-dim);">${escapeHtml(d.device_type || 'mobile')}</div>
+      </td>
+      <td>
+        <span class="badge ${d.status === 'ACTIVE' ? 'badge-online' : 'badge-offline'}">${d.status}</span>
+      </td>
+      <td style="font-size: 0.75rem; color: var(--text-dim);">${formatTimeAgo(d.enrolled_at)}</td>
+      <td style="font-size: 0.75rem; color: var(--text-dim);">${formatTimeAgo(d.last_seen_at)}</td>
+      <td>
+        ${d.status === 'ACTIVE' ? `
+          <button class="action-btn" style="border-color: #ff4444; color: #ff4444;" onclick="revokeCyberNetDevice('${d.id}')">REVOKE</button>
+        ` : `
+          <span style="font-size: 0.75rem; color: var(--text-dim);">REVOKED</span>
+        `}
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function toggleGateway(nodeId, enable) {
+  try {
+    const action = enable ? 'enable' : 'disable';
+    const res = await fetch(`/api/v1/net/gateways/${nodeId}/${action}`, { method: 'POST' });
+    if (res.ok) {
+      loadCyberNet();
+    } else {
+      alert('Failed to update gateway: ' + res.statusText);
+    }
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function revokeCyberNetDevice(deviceId) {
+  if (!confirm(`Are you sure you want to revoke device ${deviceId}? It will immediately be disconnected from CyberNet.`)) return;
+  try {
+    const res = await fetch(`/api/v1/net/devices/${deviceId}/revoke`, { method: 'POST' });
+    if (res.ok) {
+      loadCyberNet();
+    } else {
+      alert('Failed to revoke device: ' + res.statusText);
+    }
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function triggerCyberNetDoctor() {
+  try {
+    const res = await fetch('/api/v1/net/doctor');
+    const data = await res.json();
+    const checksText = data.checks.map(c => `[${c.status}] ${c.name}: ${c.detail}`).join('\n');
+    alert(`CyberNet Doctor Diagnostic: ${data.overall}\n\n${checksText}`);
+  } catch (e) {
+    alert('Doctor diagnostics failed: ' + e.message);
+  }
+}
+
+function fetchCyberNet() {
+  loadCyberNet();
+}
+
 // Initial bootstrap
 window.addEventListener('DOMContentLoaded', () => {
   connectWebSocket();
   loadCyberStore();
+  loadCyberNet();
   setInterval(loadCyberStore, 6000);
+  setInterval(loadCyberNet, 5000);
 });
