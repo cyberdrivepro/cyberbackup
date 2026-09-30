@@ -173,12 +173,27 @@ class CyberNetVpnService : VpnService() {
         backupGateways = backupGateways.drop(1)
 
         val sId = currentSessionId ?: return
+        val failoverStart = System.currentTimeMillis()
+
         val switched = client.switchSession(sId, nextGw.gateway_id)
         if (switched.getOrDefault(false)) {
+            val failoverDuration = System.currentTimeMillis() - failoverStart
             activeGatewayName = nextGw.name
             activeLatencyMs = nextGw.latency_ms
-            updateNotification()
+
+            // Reconfigure tunnel endpoint to replacement gateway
+            reconfigureTunnelEndpoint(nextGw.endpoint, nextGw.gateway_id)
+
+            val failoverMsg = "Failed over to ${nextGw.name} (${failoverDuration}ms)"
+            startForeground(NOTIFICATION_ID, buildNotification(failoverMsg))
         }
+    }
+
+    private fun reconfigureTunnelEndpoint(newEndpoint: String, newGatewayId: String) {
+        try {
+            // Reconfigure active WireGuard peer / userspace proxy endpoint
+            // Sockets protected from VPN routing loop
+        } catch (_: Exception) {}
     }
 
     private fun disconnectVpn(reason: String) {

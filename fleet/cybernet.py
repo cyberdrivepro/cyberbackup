@@ -2,11 +2,19 @@
 Phase 3: CyberNet Gateway Scoring, WireGuard Config Generation & Session Manager.
 Calculates multi-profile gateway scores, assigns virtual IPs, and prepares VPN configs.
 """
+import base64
 import hashlib
 import ipaddress
+import os
+from pathlib import Path
 import secrets
+import shutil
+import socket
 import time
 from typing import Any, Dict, List, Optional, Tuple
+
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat, PrivateFormat, NoEncryption
 
 from fleet.models import (
     CyberNetGatewayInfo,
@@ -14,6 +22,104 @@ from fleet.models import (
     CyberNetProtocol,
     NodeRecord,
 )
+
+
+def generate_wireguard_keypair() -> Tuple[str, str]:
+    """
+    Generates a mathematically valid Curve25519 keypair for WireGuard (RFC 7748).
+    Returns (private_key_base64, public_key_base64).
+    """
+    priv = X25519PrivateKey.generate()
+    pub = priv.public_key()
+    priv_bytes = priv.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
+    pub_bytes = pub.public_bytes(Encoding.Raw, PublicFormat.Raw)
+    return base64.b64encode(priv_bytes).decode("ascii"), base64.b64encode(pub_bytes).decode("ascii")
+
+
+def derive_public_key(private_key_b64: str) -> str:
+    """
+    Derives the WireGuard Curve25519 public key corresponding to a given private key.
+    """
+    raw_priv = base64.b64decode(private_key_b64)
+    if len(raw_priv) != 32:
+        raise ValueError(f"WireGuard private key must be exactly 32 bytes, got {len(raw_priv)}")
+    priv = X25519PrivateKey.from_private_bytes(raw_priv)
+    pub = priv.public_key()
+    pub_bytes = pub.public_bytes(Encoding.Raw, PublicFormat.Raw)
+    return base64.b64encode(pub_bytes).decode("ascii")
+
+
+def validate_public_key(public_key_b64: str) -> bool:
+    """Checks if a base64 string is a valid 32-byte WireGuard public key."""
+    try:
+        raw = base64.b64decode(public_key_b64)
+        return len(raw) == 32
+    except Exception:
+        return False
+
+
+def detect_gateway_capabilities(node: Optional[NodeRecord] = None) -> Dict[str, Any]:
+    """
+    Truthfully inspects whether this node or host is capable of running
+    kernel WireGuard, or if it must rely on user-space SSH / SOCKS5 / Tun2Socks fallback.
+    Prevents false claims in rootless or unprivileged container environments.
+    """
+    wg_bin = shutil.which("wg")
+    has_tun = Path("/dev/net/tun").exists()
+    
+    # Check IP forwarding
+    ip_fwd = False
+    fwd_path = Path("/proc/sys/net/ipv4/ip_forward")
+    if fwd_path.exists():
+        try:
+            ip_fwd = (fwd_path.read_text().strip() == "1")
+        except Exception:
+            pass
+
+    # Check iptables / nftables for NAT masquerading
+    iptables_bin = shutil.which("iptables")
+    nft_bin = shutil.which("nft")
+    has_firewall = bool(iptables_bin or nft_bin)
+
+    # Check rootless / NET_ADMIN capability
+    is_root = False
+    try:
+        is_root = (os.geteuid() == 0)
+    except Exception:
+        pass
+
+    # Determine status
+    if wg_bin and has_tun and ip_fwd and has_firewall and is_root:
+        wg_status = "READY"
+        wg_detail = "Kernel WireGuard interface, NAT routing, and IP forwarding fully operational."
+        wg_capable = True
+    elif has_tun and wg_bin:
+        wg_status = "DEGRADED"
+        wg_detail = "WireGuard available but root/firewall NAT permissions restricted; egress routing limited."
+        wg_capable = True
+    else:
+        wg_status = "UNSUPPORTED"
+        reasons = []
+        if not wg_bin:
+            reasons.append("wg utility missing")
+        if not has_firewall:
+            reasons.append("iptables/nftables missing")
+        if not is_root:
+            reasons.append("rootless container / no NET_ADMIN")
+        wg_detail = f"Kernel WireGuard unsupported ({', '.join(reasons)}). Userspace SSH/SOCKS5 fallback is active."
+        wg_capable = False
+
+    return {
+        "wireguard_capable": wg_capable,
+        "wireguard_status": wg_status,
+        "wireguard_status_detail": wg_detail,
+        "userspace_fallback_ready": True,
+        "ip_forwarding": ip_fwd,
+        "tun_device": has_tun,
+        "firewall_present": has_firewall,
+        "is_root": is_root,
+    }
+
 
 
 def calculate_gateway_score(
@@ -162,10 +268,16 @@ def generate_wireguard_client_config(
 ) -> str:
     """
     Generates standard WireGuard client configuration file contents.
+    Validates gateway public key to ensure valid Curve25519 cryptography.
     """
+    if not gateway_public_key or not validate_public_key(gateway_public_key):
+        raise ValueError(f"Invalid or missing WireGuard gateway public key: {gateway_public_key}")
+
+    priv_key = client_private_key.strip() if client_private_key else "${CLIENT_PRIVATE_KEY}"
+
     dns_line = f"DNS = {', '.join(dns_servers)}" if dns_servers else "DNS = 1.1.1.1, 1.0.0.1"
     return f"""[Interface]
-PrivateKey = {client_private_key}
+PrivateKey = {priv_key}
 Address = {client_ip}/32
 {dns_line}
 

@@ -344,6 +344,10 @@ class CyberNetGatewayInfo(BaseModel):
     wireguard_port: int = 51820
     wireguard_public_key: str = ""
     wireguard_subnet: str = "10.66.0.0/24"
+    wireguard_status: str = "READY"
+    wireguard_status_detail: str = ""
+    userspace_fallback_ready: bool = True
+    wireguard_private_key: Optional[str] = None
     ssh_enabled: bool = True
     ssh_port: int = 22
     udp_supported: bool = True
@@ -372,11 +376,20 @@ class CyberNetSessionRecord(BaseModel):
     disconnect_reason: Optional[str] = None
 
 
+class CyberNetEnrollTokenRecord(BaseModel):
+    token: str
+    created_at: float = Field(default_factory=time.time)
+    expires_at: float
+    used: bool = False
+    created_by: str = "admin"
+
+
 class CyberNetEnrollRequest(BaseModel):
     name: str
     device_type: str = "android"
-    os_version: str = "Android 15"
+    os_version: str = "Android 14"
     public_key: str
+    enrollment_token: Optional[str] = None
 
 
 class CyberNetSessionRequest(BaseModel):
@@ -400,4 +413,8 @@ class CyberNetSessionResponse(BaseModel):
     wireguard_config: Optional[str] = None
     ssh_config: Optional[Dict[str, Any]] = None
     backup_gateways: List[Dict[str, Any]] = Field(default_factory=list)
+    gateway_public_key: Optional[str] = None
+    client_assigned_ip: Optional[str] = None
+    endpoint: Optional[str] = None
+
 

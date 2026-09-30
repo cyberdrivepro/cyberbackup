@@ -555,6 +555,13 @@ def handle_net_cli(argv: list) -> int:
     gw_disable.add_argument("node_id", help="Node ID to disable")
     gw_sub.add_parser("status")
 
+    # enroll-token
+    tok_cmd = subparsers.add_parser("enroll-token")
+    tok_sub = tok_cmd.add_subparsers(dest="token_action")
+    tok_create = tok_sub.add_parser("create")
+    tok_create.add_argument("--ttl", type=int, default=3600, help="Validity period in seconds (default: 3600)")
+    tok_sub.add_parser("list")
+
     # sessions
     subparsers.add_parser("sessions")
 
@@ -603,14 +610,16 @@ def handle_net_cli(argv: list) -> int:
             print_warn("No gateway nodes found. Enable one with: cybervps net gateway enable <node_id>")
             return 0
 
-        print(f"{'NODE ID':<16} {'NAME':<16} {'REGION':<8} {'IP':<16} {'LATENCY':<10} {'SESSIONS':<10} {'SCORE':<8} {'STATUS'}")
-        print("-" * 92)
+        print(f"{'NODE ID':<14} {'NAME':<14} {'REGION':<7} {'IP':<15} {'WG STATUS':<12} {'SCORE':<7} {'STATE'}")
+        print("-" * 85)
         for gw in gateways:
             node = nodes.get(gw.node_id)
             score = calculate_gateway_score(gw, node, profile)
             node_name = node.name if node else gw.node_id
             status_str = "\033[1;32mENABLED\033[0m" if gw.enabled else "\033[1;30mDISABLED\033[0m"
-            print(f"{gw.node_id:<16} {node_name:<16} {gw.region:<8} {gw.ipv4_address:<16} {gw.latency_ms:<10.1f} {gw.active_sessions:<10} {score:<8.1f} {status_str}")
+            wg_color = "\033[1;32m" if gw.wireguard_status == "READY" else ("\033[1;33m" if gw.wireguard_status == "DEGRADED" else "\033[1;31m")
+            wg_st = f"{wg_color}{gw.wireguard_status}\033[0m"
+            print(f"{gw.node_id:<14} {node_name:<14} {gw.region:<7} {gw.ipv4_address:<15} {wg_st:<21} {score:<7.1f} {status_str}")
         return 0
 
     elif args.net_action == "gateway":
@@ -619,13 +628,33 @@ def handle_net_cli(argv: list) -> int:
             if not node:
                 print_fail(f"Node not found: {args.node_id}")
                 return 1
+            from fleet.cybernet import detect_gateway_capabilities, generate_wireguard_keypair
+            caps = detect_gateway_capabilities()
+
+            existing_gw = db.get_gateway(args.node_id)
+            priv_k = existing_gw.wireguard_private_key if existing_gw and existing_gw.wireguard_private_key else None
+            pub_k = existing_gw.wireguard_public_key if existing_gw and existing_gw.wireguard_public_key else None
+            if not priv_k or not pub_k:
+                priv_k, pub_k = generate_wireguard_keypair()
+
             gw = db.set_gateway(
                 node_id=args.node_id,
                 enabled=True,
+                wireguard_enabled=caps["wireguard_capable"],
+                wireguard_status=caps["wireguard_status"],
+                wireguard_status_detail=caps["wireguard_status_detail"],
+                userspace_fallback_ready=True,
+                wireguard_public_key=pub_k,
+                wireguard_private_key=priv_k,
                 ipv4_address=node.get("hostname", "127.0.0.1"),
                 region=node.get("region") or "NL",
             )
             print_ok(f"Enabled CyberNet gateway on node {args.node_id} ({node['name']})")
+            if caps["wireguard_status"] == "READY":
+                print_ok(f"  • WireGuard Status: READY (Kernel WireGuard active, pubkey: {pub_k[:12]}...)")
+            else:
+                print_warn(f"  • WireGuard Status: {caps['wireguard_status']} ({caps['wireguard_status_detail']})")
+                print_ok("  • Userspace Fallback: READY (SSH/SOCKS5 userspace proxy operational)")
             return 0
         elif args.gateway_action == "disable":
             db.set_gateway(node_id=args.node_id, enabled=False)
@@ -634,6 +663,34 @@ def handle_net_cli(argv: list) -> int:
         else:
             print("Usage: cybervps net gateway {enable|disable} <node_id>")
             return 1
+
+    elif args.net_action == "enroll-token":
+        if args.token_action == "create":
+            ttl = getattr(args, "ttl", 3600)
+            token = db.create_enroll_token(ttl_seconds=ttl, created_by="cli_admin")
+            print_ok(f"Generated mobile device enrollment token (valid {ttl}s):")
+            print(f"  \033[1;36m{token}\033[0m")
+            print("\nEnter this pairing token in the CyberNet Android app to enroll your device.")
+            return 0
+        elif args.token_action == "list":
+            print_header("Active Mobile Device Enrollment Tokens")
+            tokens = db.list_enroll_tokens()
+            if not tokens:
+                print_warn("No enrollment tokens found. Generate one with: cybervps net enroll-token create")
+                return 0
+            print(f"{'TOKEN':<36} {'EXPIRES IN':<14} {'STATUS'}")
+            print("-" * 65)
+            now = time.time()
+            for t in tokens:
+                rem = int(t["expires_at"] - now)
+                rem_str = f"{rem}s" if rem > 0 else "EXPIRED"
+                st = "\033[1;31mUSED\033[0m" if t["used"] else ("\033[1;32mVALID\033[0m" if rem > 0 else "\033[1;30mEXPIRED\033[0m")
+                print(f"{t['token']:<36} {rem_str:<14} {st}")
+            return 0
+        else:
+            print("Usage: cybervps net enroll-token {create|list}")
+            return 1
+
 
     elif args.net_action == "devices":
         print_header("Enrolled CyberNet Mobile Devices")

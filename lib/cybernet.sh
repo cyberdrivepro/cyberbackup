@@ -29,6 +29,7 @@ handle_cybernet_submenu() {
         echo -e "  ${C_BWHITE}[6]${C_RESET} View Active VPN Sessions"
         echo -e "  ${C_BWHITE}[7]${C_RESET} Run CyberNet Diagnostics Doctor"
         echo -e "  ${C_BWHITE}[8]${C_RESET} Benchmark Gateway Latency"
+        echo -e "  ${C_BWHITE}[9]${C_RESET} Generate Mobile Pairing Token"
         echo -e "  ${C_BWHITE}[0]${C_RESET} Return to Main Menu"
         echo
         local choice=""
@@ -72,6 +73,10 @@ handle_cybernet_submenu() {
                 local gid=""
                 read -rp "Enter Gateway Node ID: " gid
                 [ -n "$gid" ] && cybervps_net_cli benchmark "$gid"
+                read -rp "Press Enter to continue..." _
+                ;;
+            9)
+                cybervps_net_cli enroll-token create
                 read -rp "Press Enter to continue..." _
                 ;;
             0)

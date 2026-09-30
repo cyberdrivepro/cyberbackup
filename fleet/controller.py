@@ -56,9 +56,11 @@ from fleet.models import (
     StoredFile,
     TransferTicket,
     CyberNetDevice,
+    CyberNetDeviceStatus,
     CyberNetGatewayInfo,
     CyberNetSessionRecord,
     CyberNetEnrollRequest,
+    CyberNetEnrollTokenRecord,
     CyberNetSessionRequest,
     CyberNetSessionResponse,
     CyberNetScoreProfile,
@@ -67,9 +69,13 @@ from fleet.cybernet import (
     calculate_gateway_score,
     select_best_gateways,
     allocate_client_ip,
-    generate_wireguard_client_config,
+    derive_public_key,
+    detect_gateway_capabilities,
     generate_ssh_tunnel_config,
+    generate_wireguard_client_config,
+    generate_wireguard_keypair,
     resolve_dns_preset,
+    validate_public_key,
 )
 from fleet.doctor import CyberNetDoctor
 from fleet.probe import probe_url
@@ -296,6 +302,56 @@ def verify_node_credentials(
         raise HTTPException(status_code=401, detail="Invalid node credentials")
 
     return node
+
+
+def get_authenticated_device(
+    authorization: Optional[str] = Header(None),
+) -> CyberNetDevice:
+    """
+    Authenticates a CyberNet mobile or client device via Bearer auth token.
+    Enforces timing-safe token hash comparison and checks active status.
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or malformed Authorization header. Expected Bearer token.",
+        )
+    token = authorization.split(" ", 1)[1].strip()
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Empty bearer token")
+
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    device = DB.get_device_by_token_hash(token_hash)
+    if not device:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid device credentials")
+
+    if device.status == CyberNetDeviceStatus.REVOKED:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Device certificate revoked")
+
+    return device
+
+
+def get_device_or_admin(
+    authorization: Optional[str] = Header(None),
+    cybervps_session: Optional[str] = Cookie(None),
+    x_api_key: Optional[str] = Header(None),
+) -> Dict[str, Any]:
+    """
+    Allows either an authenticated admin (session/secret/API key) or an active CyberNet device.
+    """
+    admin_user = get_current_user(cybervps_session=cybervps_session, authorization=authorization, x_api_key=x_api_key)
+    if admin_user:
+        return {"type": "admin", "identity": admin_user}
+
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        device = DB.get_device_by_token_hash(token_hash)
+        if device and device.status == CyberNetDeviceStatus.ACTIVE:
+            return {"type": "device", "identity": device}
+
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Device or Admin authentication required")
+
 
 
 # Broadcast helper
@@ -1225,11 +1281,38 @@ async def websocket_dashboard_endpoint(websocket: WebSocket):
 # =====================================================================
 
 @app.post("/api/v1/net/devices/enroll")
-async def net_enroll_device(req: CyberNetEnrollRequest):
+async def net_enroll_device(
+    req: CyberNetEnrollRequest,
+    authorization: Optional[str] = Header(None),
+):
     """
     Enrolls a new CyberNet Android/client device.
+    Requires a valid pairing token (passed in JSON body or Authorization header).
     Generates a unique device_id and secure auth token.
     """
+    token = req.enrollment_token
+    if not token and authorization and authorization.startswith("Bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Enrollment token required. Generate a pairing token via: cybervps net enroll-token create",
+        )
+
+    valid_system_token = DB.get_setting("enrollment_token", ENROLLMENT_TOKEN)
+    is_valid = (
+        DB.validate_and_consume_enroll_token(token)
+        or hmac.compare_digest(token, valid_system_token)
+        or hmac.compare_digest(token, CONTROLLER_SECRET)
+    )
+
+    if not is_valid:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired enrollment token")
+
+    if not validate_public_key(req.public_key):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Curve25519 public key")
+
     device_id = f"dev_{secrets.token_hex(6)}"
     raw_token = secrets.token_hex(24)
     token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
@@ -1251,26 +1334,46 @@ async def net_enroll_device(req: CyberNetEnrollRequest):
     }
 
 
+@app.post("/api/v1/net/enroll-tokens")
+async def net_create_enroll_token(
+    ttl_seconds: int = 3600,
+    user: Dict[str, Any] = Depends(require_auth),
+):
+    """Admin endpoint to create a single-use pairing token for a mobile device."""
+    token = DB.create_enroll_token(ttl_seconds=ttl_seconds, created_by=user.get("username", "admin"))
+    return {"ok": True, "token": token, "ttl_seconds": ttl_seconds}
+
+
+@app.get("/api/v1/net/enroll-tokens")
+async def net_list_enroll_tokens(user: Dict[str, Any] = Depends(require_auth)):
+    """Admin endpoint to list pairing tokens."""
+    tokens = DB.list_enroll_tokens()
+    return {"ok": True, "tokens": tokens}
+
+
 @app.get("/api/v1/net/devices")
-async def net_list_devices():
-    """Lists all enrolled CyberNet devices."""
+async def net_list_devices(user: Dict[str, Any] = Depends(require_auth)):
+    """Lists all enrolled CyberNet devices (Admin only)."""
     devices = DB.list_devices()
     return {"ok": True, "devices": [d.model_dump() for d in devices]}
 
 
 @app.post("/api/v1/net/devices/{device_id}/revoke")
-async def net_revoke_device(device_id: str):
-    """Revokes a CyberNet device and terminates all its active sessions."""
+async def net_revoke_device(device_id: str, user: Dict[str, Any] = Depends(require_auth)):
+    """Revokes a CyberNet device and terminates all its active sessions (Admin only)."""
     ok = DB.revoke_device(device_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Device not found")
-    return {"ok": True, "message": f"Device {device_id} revoked"}
+    return {"ok": True, "device_id": device_id, "status": "REVOKED"}
 
 
 @app.get("/api/v1/net/gateways")
-async def net_list_gateways(profile: str = "BALANCED"):
+async def net_list_gateways(
+    profile: str = "BALANCED",
+    auth: Dict[str, Any] = Depends(get_device_or_admin),
+):
     """
-    Lists all gateway-capable nodes with their dynamic scores.
+    Lists all gateway-capable nodes with their dynamic scores and truthful capabilities.
     """
     try:
         score_prof = CyberNetScoreProfile(profile.upper())
@@ -1297,8 +1400,11 @@ async def net_list_gateways(profile: str = "BALANCED"):
 
 
 @app.get("/api/v1/net/gateways/{node_id}")
-async def net_get_gateway(node_id: str):
-    """Returns telemetry and configuration details for a specific gateway."""
+async def net_get_gateway(
+    node_id: str,
+    auth: Dict[str, Any] = Depends(get_device_or_admin),
+):
+    """Returns telemetry, capabilities, and configuration details for a specific gateway."""
     gw = DB.get_gateway(node_id)
     if not gw:
         raise HTTPException(status_code=404, detail="Gateway not found")
@@ -1312,30 +1418,53 @@ async def net_get_gateway(node_id: str):
 
 
 @app.post("/api/v1/net/gateways/{node_id}/enable")
-async def net_enable_gateway(node_id: str):
-    """Enables a fleet node as a CyberNet gateway."""
+async def net_enable_gateway(node_id: str, user: Dict[str, Any] = Depends(require_auth)):
+    """Enables a fleet node as a CyberNet gateway with honest capability detection."""
     node = DB.get_node(node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
+
+    caps = detect_gateway_capabilities()
+
+    existing_gw = DB.get_gateway(node_id)
+    priv_key = existing_gw.wireguard_private_key if existing_gw and existing_gw.wireguard_private_key else None
+    pub_key = existing_gw.wireguard_public_key if existing_gw and existing_gw.wireguard_public_key else None
+
+    if not priv_key or not pub_key:
+        priv_key, pub_key = generate_wireguard_keypair()
+
     gw = DB.set_gateway(
         node_id=node_id,
         enabled=True,
+        wireguard_enabled=caps["wireguard_capable"],
+        wireguard_status=caps["wireguard_status"],
+        wireguard_status_detail=caps["wireguard_status_detail"],
+        userspace_fallback_ready=True,
+        wireguard_public_key=pub_key,
+        wireguard_private_key=priv_key,
         ipv4_address=node.get("hostname", "127.0.0.1"),
         region=node.get("region") or "NL",
     )
-    return {"ok": True, "gateway": gw.model_dump()}
+    return {"ok": True, "gateway": gw.model_dump(), "capabilities": caps}
 
 
 @app.post("/api/v1/net/gateways/{node_id}/disable")
-async def net_disable_gateway(node_id: str):
-    """Disables gateway mode on a fleet node."""
+async def net_disable_gateway(node_id: str, user: Dict[str, Any] = Depends(require_auth)):
+    """Disables gateway mode on a fleet node (Admin only)."""
     gw = DB.set_gateway(node_id=node_id, enabled=False)
     return {"ok": True, "gateway": gw.model_dump()}
 
 
 @app.post("/api/v1/net/gateways/{node_id}/telemetry")
-async def net_update_telemetry(node_id: str, data: Dict[str, Any]):
-    """Called by Fleet Agent to report gateway metrics."""
+async def net_update_telemetry(
+    node_id: str,
+    data: Dict[str, Any],
+    node: Dict[str, Any] = Depends(verify_node_credentials),
+):
+    """Called by authenticated Fleet Agent to report gateway metrics."""
+    if node.get("id") != node_id:
+        raise HTTPException(status_code=403, detail="Cannot report telemetry for another node")
+
     DB.update_gateway_telemetry(
         node_id=node_id,
         latency_ms=float(data.get("latency_ms", 0.0)),
@@ -1349,17 +1478,16 @@ async def net_update_telemetry(node_id: str, data: Dict[str, Any]):
 
 
 @app.post("/api/v1/net/session")
-async def net_create_session(req: CyberNetSessionRequest):
+async def net_create_session(
+    req: CyberNetSessionRequest,
+    device: CyberNetDevice = Depends(get_authenticated_device),
+):
     """
-    Creates a new CyberNet VPN session.
-    Auto-selects optimal gateway (or validates manual gateway), assigns virtual IP,
-    and returns client WireGuard / SSH configuration with backup gateways.
+    Creates a new CyberNet VPN session for the authenticated device.
+    Auto-selects optimal gateway, assigns virtual IP, and returns configuration.
     """
-    device = DB.get_device(req.device_id)
-    if not device:
-        raise HTTPException(status_code=404, detail="Device not found")
-    if device.status == CyberNetDeviceStatus.REVOKED:
-        raise HTTPException(status_code=403, detail="Device has been revoked")
+    if device.id != req.device_id:
+        raise HTTPException(status_code=403, detail="Device ID mismatch with authenticated credentials")
 
     try:
         profile = CyberNetScoreProfile(req.score_profile.upper())
@@ -1368,13 +1496,20 @@ async def net_create_session(req: CyberNetSessionRequest):
 
     gateways = DB.list_gateways(only_enabled=True)
     if not gateways:
-        # Auto-provision first online node as gateway if none explicitly enabled
         online_nodes = [n for n in DB.list_nodes() if n["status"] == "ONLINE"]
         if online_nodes:
             first_n = online_nodes[0]
+            caps = detect_gateway_capabilities()
+            priv_k, pub_k = generate_wireguard_keypair()
             gw = DB.set_gateway(
                 node_id=first_n["id"],
                 enabled=True,
+                wireguard_enabled=caps["wireguard_capable"],
+                wireguard_status=caps["wireguard_status"],
+                wireguard_status_detail=caps["wireguard_status_detail"],
+                userspace_fallback_ready=True,
+                wireguard_public_key=pub_k,
+                wireguard_private_key=priv_k,
                 ipv4_address=first_n.get("hostname", "127.0.0.1"),
                 region=first_n.get("region") or "NL",
             )
@@ -1393,6 +1528,15 @@ async def net_create_session(req: CyberNetSessionRequest):
 
     if not primary_gw:
         raise HTTPException(status_code=503, detail="No healthy gateway available for profile")
+
+    # Ensure selected gateway has genuine Curve25519 WireGuard keys
+    if not primary_gw.wireguard_public_key:
+        priv_k, pub_k = generate_wireguard_keypair()
+        primary_gw = DB.set_gateway(
+            node_id=primary_gw.node_id,
+            wireguard_public_key=pub_k,
+            wireguard_private_key=priv_k,
+        )
 
     # Allocate IP in gateway subnet
     active_sessions = DB.list_sessions(limit=200)
@@ -1419,9 +1563,9 @@ async def net_create_session(req: CyberNetSessionRequest):
     wg_config = None
     if protocol == "WIREGUARD":
         wg_config = generate_wireguard_client_config(
-            client_private_key="<DEVICE_KEYSTORE_PRIVATE_KEY>",
+            client_private_key="${CLIENT_PRIVATE_KEY}",
             client_ip=client_ip,
-            gateway_public_key=primary_gw.wireguard_public_key or "pub_dummy_gw_key",
+            gateway_public_key=primary_gw.wireguard_public_key,
             gateway_endpoint=endpoint,
             dns_servers=dns_servers,
             allowed_ips="0.0.0.0/0, ::/0" if req.full_tunnel else "10.66.0.0/24",
@@ -1445,6 +1589,7 @@ async def net_create_session(req: CyberNetSessionRequest):
             "name": b_node.name if b_node else b.node_id,
             "region": b.region,
             "endpoint": f"{b.ipv4_address}:{b.wireguard_port}",
+            "gateway_public_key": b.wireguard_public_key,
             "latency_ms": b.latency_ms,
             "score": b.gateway_score,
         })
@@ -1462,11 +1607,17 @@ async def net_create_session(req: CyberNetSessionRequest):
         wireguard_config=wg_config,
         ssh_config=ssh_config,
         backup_gateways=backups_data,
+        gateway_public_key=primary_gw.wireguard_public_key,
+        client_assigned_ip=client_ip,
+        endpoint=endpoint,
     )
 
 
 @app.post("/api/v1/net/session/switch")
-async def net_switch_session(data: Dict[str, Any]):
+async def net_switch_session(
+    data: Dict[str, Any],
+    device: CyberNetDevice = Depends(get_authenticated_device),
+):
     """Switches an existing session to a replacement gateway (e.g. during failover)."""
     session_id = data.get("session_id")
     target_gw_id = data.get("target_gateway_id")
@@ -1476,6 +1627,9 @@ async def net_switch_session(data: Dict[str, Any]):
     old_sess = DB.get_session(session_id)
     if not old_sess or old_sess.status.value != "ACTIVE":
         raise HTTPException(status_code=404, detail="Active session not found")
+
+    if old_sess.device_id != device.id:
+        raise HTTPException(status_code=403, detail="Cannot switch session belonging to another device")
 
     target_gw = DB.get_gateway(target_gw_id)
     if not target_gw or not target_gw.enabled:
@@ -1493,29 +1647,53 @@ async def net_switch_session(data: Dict[str, Any]):
     )
 
     node = DB.get_node(target_gw_id)
+    endpoint = f"{target_gw.ipv4_address}:{target_gw.wireguard_port}"
     return {
         "ok": True,
         "old_session_id": session_id,
         "new_session_id": new_sess_id,
         "gateway_id": target_gw_id,
         "gateway_name": node["name"] if node else target_gw_id,
-        "endpoint": f"{target_gw.ipv4_address}:{target_gw.wireguard_port}",
+        "gateway_public_key": target_gw.wireguard_public_key,
+        "endpoint": endpoint,
+        "assigned_ip": old_sess.assigned_ip,
     }
 
 
 @app.delete("/api/v1/net/session/{session_id}")
-async def net_terminate_session(session_id: str):
+async def net_terminate_session(
+    session_id: str,
+    auth: Dict[str, Any] = Depends(get_device_or_admin),
+):
     """Terminates an active CyberNet VPN session."""
+    sess = DB.get_session(session_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if auth["type"] == "device":
+        device: CyberNetDevice = auth["identity"]
+        if sess.device_id != device.id:
+            raise HTTPException(status_code=403, detail="Cannot terminate session belonging to another device")
+
     ok = DB.terminate_session(session_id, disconnect_reason="CLIENT_DISCONNECT")
     return {"ok": ok, "session_id": session_id}
 
 
 @app.get("/api/v1/net/session/{session_id}/stats")
-async def net_session_stats(session_id: str):
+async def net_session_stats(
+    session_id: str,
+    auth: Dict[str, Any] = Depends(get_device_or_admin),
+):
     """Returns current live counters for a session."""
     sess = DB.get_session(session_id)
     if not sess:
         raise HTTPException(status_code=404, detail="Session not found")
+
+    if auth["type"] == "device":
+        device: CyberNetDevice = auth["identity"]
+        if sess.device_id != device.id:
+            raise HTTPException(status_code=403, detail="Cannot access stats for another device's session")
+
     gw = DB.get_gateway(sess.gateway_node_id)
     return {
         "ok": True,
@@ -1532,11 +1710,18 @@ async def net_session_stats(session_id: str):
 
 
 @app.post("/api/v1/net/session/{session_id}/heartbeat")
-async def net_session_heartbeat(session_id: str, data: Dict[str, Any]):
+async def net_session_heartbeat(
+    session_id: str,
+    data: Dict[str, Any],
+    device: CyberNetDevice = Depends(get_authenticated_device),
+):
     """Updates session live RX/TX counters and refreshes device last_seen."""
     sess = DB.get_session(session_id)
     if not sess or sess.status.value != "ACTIVE":
         raise HTTPException(status_code=404, detail="Active session not found")
+
+    if sess.device_id != device.id:
+        raise HTTPException(status_code=403, detail="Cannot update heartbeat for another device's session")
 
     rx = int(data.get("bytes_rx", sess.bytes_rx))
     tx = int(data.get("bytes_tx", sess.bytes_tx))
@@ -1546,15 +1731,15 @@ async def net_session_heartbeat(session_id: str, data: Dict[str, Any]):
 
 
 @app.get("/api/v1/net/summary")
-async def net_summary():
-    """Returns overview statistics for the Web Dashboard CyberNet tab."""
+async def net_summary(user: Dict[str, Any] = Depends(require_auth)):
+    """Returns overview statistics for the Web Dashboard CyberNet tab (Admin only)."""
     summary = DB.get_cybernet_summary()
     return {"ok": True, "summary": summary}
 
 
 @app.get("/api/v1/net/doctor")
-async def net_doctor():
-    """Runs the CyberNet diagnostic doctor."""
+async def net_doctor(user: Dict[str, Any] = Depends(require_auth)):
+    """Runs the CyberNet diagnostic doctor (Admin only)."""
     results = CyberNetDoctor.run_all()
     overall = "PASS"
     if any(r["status"] == "FAIL" for r in results):
@@ -1562,6 +1747,7 @@ async def net_doctor():
     elif any(r["status"] == "WARN" for r in results):
         overall = "WARN"
     return {"ok": True, "overall": overall, "checks": results}
+
 
 
 def run_controller(host: str = "0.0.0.0", port: int = 8000):

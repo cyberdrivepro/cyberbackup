@@ -6,6 +6,7 @@ from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
+import secrets
 import sqlite3
 import time
 from typing import Any, Dict, List, Optional
@@ -252,6 +253,10 @@ class FleetDatabase:
                 wireguard_port INTEGER NOT NULL DEFAULT 51820,
                 wireguard_public_key TEXT NOT NULL DEFAULT '',
                 wireguard_subnet TEXT NOT NULL DEFAULT '10.66.0.0/24',
+                wireguard_status TEXT NOT NULL DEFAULT 'READY',
+                wireguard_status_detail TEXT NOT NULL DEFAULT '',
+                userspace_fallback_ready INTEGER NOT NULL DEFAULT 1,
+                wireguard_private_key TEXT,
                 ssh_enabled INTEGER NOT NULL DEFAULT 1,
                 ssh_port INTEGER NOT NULL DEFAULT 22,
                 udp_supported INTEGER NOT NULL DEFAULT 1,
@@ -265,6 +270,14 @@ class FleetDatabase:
                 tunnel_tx_bytes INTEGER NOT NULL DEFAULT 0,
                 gateway_score REAL NOT NULL DEFAULT 0.0,
                 FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS cybernet_enroll_tokens (
+                token TEXT PRIMARY KEY,
+                created_at REAL NOT NULL,
+                expires_at REAL NOT NULL,
+                used INTEGER NOT NULL DEFAULT 0,
+                created_by TEXT NOT NULL DEFAULT 'admin'
             );
 
             CREATE TABLE IF NOT EXISTS cybernet_sessions (
@@ -326,6 +339,20 @@ class FleetDatabase:
                 if col not in existing_node_cols:
                     try:
                         conn.execute(f"ALTER TABLE nodes ADD COLUMN {col} {col_def}")
+                    except Exception:
+                        pass
+
+            gw_cols = {
+                "wireguard_status": "TEXT NOT NULL DEFAULT 'READY'",
+                "wireguard_status_detail": "TEXT NOT NULL DEFAULT ''",
+                "userspace_fallback_ready": "INTEGER NOT NULL DEFAULT 1",
+                "wireguard_private_key": "TEXT",
+            }
+            existing_gw_cols = {row[1] for row in conn.execute("PRAGMA table_info(cybernet_gateways)").fetchall()}
+            for col, col_def in gw_cols.items():
+                if col not in existing_gw_cols:
+                    try:
+                        conn.execute(f"ALTER TABLE cybernet_gateways ADD COLUMN {col} {col_def}")
                     except Exception:
                         pass
             conn.commit()
@@ -1215,7 +1242,7 @@ class FleetDatabase:
 
     def get_device_by_token_hash(self, token_hash: str) -> Optional[CyberNetDevice]:
         with self.connection() as conn:
-            row = conn.execute("SELECT * FROM cybernet_devices WHERE auth_token_hash = ? AND status = 'ACTIVE'", (token_hash,)).fetchone()
+            row = conn.execute("SELECT * FROM cybernet_devices WHERE auth_token_hash = ?", (token_hash,)).fetchone()
             if not row:
                 return None
             return CyberNetDevice(
@@ -1263,6 +1290,40 @@ class FleetDatabase:
             conn.execute("UPDATE cybernet_devices SET last_seen_at = ? WHERE id = ?", (time.time(), device_id))
             conn.commit()
 
+    def create_enroll_token(self, ttl_seconds: int = 3600, created_by: str = "admin") -> str:
+        token = f"net_{secrets.token_urlsafe(24)}"
+        now = time.time()
+        expires = now + ttl_seconds
+        with self.connection() as conn:
+            conn.execute(
+                "INSERT INTO cybernet_enroll_tokens (token, created_at, expires_at, used, created_by) VALUES (?, ?, ?, 0, ?)",
+                (token, now, expires, created_by),
+            )
+            conn.commit()
+        return token
+
+    def validate_and_consume_enroll_token(self, token: str) -> bool:
+        now = time.time()
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT token, expires_at, used FROM cybernet_enroll_tokens WHERE token = ?",
+                (token,),
+            ).fetchone()
+            if not row:
+                return False
+            if row["used"] == 1 or row["expires_at"] < now:
+                return False
+            conn.execute("UPDATE cybernet_enroll_tokens SET used = 1 WHERE token = ?", (token,))
+            conn.commit()
+            return True
+
+    def list_enroll_tokens(self) -> List[Dict[str, Any]]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT token, created_at, expires_at, used, created_by FROM cybernet_enroll_tokens ORDER BY created_at DESC"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
     def set_gateway(
         self,
         node_id: str,
@@ -1271,6 +1332,10 @@ class FleetDatabase:
         wireguard_port: int = 51820,
         wireguard_public_key: str = "",
         wireguard_subnet: str = "10.66.0.0/24",
+        wireguard_status: str = "READY",
+        wireguard_status_detail: str = "",
+        userspace_fallback_ready: bool = True,
+        wireguard_private_key: Optional[str] = None,
         ssh_enabled: bool = True,
         ssh_port: int = 22,
         udp_supported: bool = True,
@@ -1285,15 +1350,20 @@ class FleetDatabase:
                 """
                 INSERT INTO cybernet_gateways (
                     node_id, enabled, wireguard_enabled, wireguard_port, wireguard_public_key,
-                    wireguard_subnet, ssh_enabled, ssh_port, udp_supported, ipv4_address,
+                    wireguard_subnet, wireguard_status, wireguard_status_detail, userspace_fallback_ready,
+                    wireguard_private_key, ssh_enabled, ssh_port, udp_supported, ipv4_address,
                     ipv6_address, region, latency_ms, packet_loss
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(node_id) DO UPDATE SET
                     enabled = excluded.enabled,
                     wireguard_enabled = excluded.wireguard_enabled,
                     wireguard_port = excluded.wireguard_port,
                     wireguard_public_key = CASE WHEN excluded.wireguard_public_key != '' THEN excluded.wireguard_public_key ELSE cybernet_gateways.wireguard_public_key END,
                     wireguard_subnet = excluded.wireguard_subnet,
+                    wireguard_status = excluded.wireguard_status,
+                    wireguard_status_detail = excluded.wireguard_status_detail,
+                    userspace_fallback_ready = excluded.userspace_fallback_ready,
+                    wireguard_private_key = CASE WHEN excluded.wireguard_private_key IS NOT NULL THEN excluded.wireguard_private_key ELSE cybernet_gateways.wireguard_private_key END,
                     ssh_enabled = excluded.ssh_enabled,
                     ssh_port = excluded.ssh_port,
                     udp_supported = excluded.udp_supported,
@@ -1306,6 +1376,8 @@ class FleetDatabase:
                 (
                     node_id, 1 if enabled else 0, 1 if wireguard_enabled else 0,
                     wireguard_port, wireguard_public_key, wireguard_subnet,
+                    wireguard_status, wireguard_status_detail, 1 if userspace_fallback_ready else 0,
+                    wireguard_private_key,
                     1 if ssh_enabled else 0, ssh_port, 1 if udp_supported else 0,
                     ipv4_address, ipv6_address, region, latency_ms, packet_loss,
                 ),
@@ -1318,6 +1390,7 @@ class FleetDatabase:
             row = conn.execute("SELECT * FROM cybernet_gateways WHERE node_id = ?", (node_id,)).fetchone()
             if not row:
                 return None
+            keys = row.keys()
             return CyberNetGatewayInfo(
                 node_id=row["node_id"],
                 enabled=bool(row["enabled"]),
@@ -1325,6 +1398,10 @@ class FleetDatabase:
                 wireguard_port=row["wireguard_port"],
                 wireguard_public_key=row["wireguard_public_key"],
                 wireguard_subnet=row["wireguard_subnet"],
+                wireguard_status=row["wireguard_status"] if "wireguard_status" in keys else "READY",
+                wireguard_status_detail=row["wireguard_status_detail"] if "wireguard_status_detail" in keys else "",
+                userspace_fallback_ready=bool(row["userspace_fallback_ready"]) if "userspace_fallback_ready" in keys else True,
+                wireguard_private_key=row["wireguard_private_key"] if "wireguard_private_key" in keys else None,
                 ssh_enabled=bool(row["ssh_enabled"]),
                 ssh_port=row["ssh_port"],
                 udp_supported=bool(row["udp_supported"]),
@@ -1354,6 +1431,10 @@ class FleetDatabase:
                     wireguard_port=r["wireguard_port"],
                     wireguard_public_key=r["wireguard_public_key"],
                     wireguard_subnet=r["wireguard_subnet"],
+                    wireguard_status=r["wireguard_status"] if "wireguard_status" in r.keys() else "READY",
+                    wireguard_status_detail=r["wireguard_status_detail"] if "wireguard_status_detail" in r.keys() else "",
+                    userspace_fallback_ready=bool(r["userspace_fallback_ready"]) if "userspace_fallback_ready" in r.keys() else True,
+                    wireguard_private_key=r["wireguard_private_key"] if "wireguard_private_key" in r.keys() else None,
                     ssh_enabled=bool(r["ssh_enabled"]),
                     ssh_port=r["ssh_port"],
                     udp_supported=bool(r["udp_supported"]),

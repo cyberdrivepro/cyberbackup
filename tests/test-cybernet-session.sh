@@ -20,6 +20,7 @@ from fleet.database import FleetDatabase
 from fleet.cybernet import (
     allocate_client_ip,
     generate_wireguard_client_config,
+    generate_wireguard_keypair,
     generate_ssh_tunnel_config,
 )
 from fleet.models import CyberNetDeviceStatus, CyberNetSessionStatus
@@ -29,6 +30,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
     db = FleetDatabase(db_path)
 
     # 1. Device Enrollment
+    client_priv, client_pub = generate_wireguard_keypair()
     auth_credential = "".join(["t", "e", "s", "t", "_", "a", "u", "t", "h", "_", "1", "2", "3"])
     auth_hash = hashlib.sha256(auth_credential.encode("utf-8")).hexdigest()
     dev = db.enroll_device(
@@ -36,7 +38,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
         name="Suraj-Phone",
         device_type="android",
         os_version="Android 15",
-        public_key="pub_client_wg_key_base64==",
+        public_key=client_pub,
         auth_token_hash=auth_hash,
     )
     assert dev.id == "dev_phone_01"
@@ -45,7 +47,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
     print("OK: Device enrollment and token authentication verified")
 
     # 2. Gateway Provisioning
-    # Register mock host node first
+    server_priv, server_pub = generate_wireguard_keypair()
     with db.connection() as conn:
         conn.execute(
             "INSERT INTO nodes (id, name, secret_hash, enrolled_at, last_heartbeat) VALUES (?, ?, ?, ?, ?)",
@@ -58,7 +60,8 @@ with tempfile.TemporaryDirectory() as tmpdir:
         enabled=True,
         wireguard_enabled=True,
         wireguard_port=51820,
-        wireguard_public_key="pub_server_wg_key_base64==",
+        wireguard_public_key=server_pub,
+        wireguard_private_key=server_priv,
         wireguard_subnet="10.66.0.0/24",
         ipv4_address="198.51.100.4",
         region="NL",

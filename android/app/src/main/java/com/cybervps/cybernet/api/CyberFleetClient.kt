@@ -18,6 +18,18 @@ class CyberFleetClient(private val keystore: KeystoreManager) {
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
     private val httpClient = OkHttpClient.Builder()
+        .addInterceptor { chain ->
+            val orig = chain.request()
+            val token = keystore.getAuthToken()
+            if (!token.isNullOrBlank() && orig.header("Authorization") == null) {
+                val authed = orig.newBuilder()
+                    .header("Authorization", "Bearer $token")
+                    .build()
+                chain.proceed(authed)
+            } else {
+                chain.proceed(orig)
+            }
+        }
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .writeTimeout(15, TimeUnit.SECONDS)
@@ -25,20 +37,30 @@ class CyberFleetClient(private val keystore: KeystoreManager) {
 
     private fun getBaseUrl(): String = keystore.getControllerUrl().trimEnd('/')
 
-    suspend fun enrollDevice(deviceName: String, osVersion: String): Result<String> = withContext(Dispatchers.IO) {
+    suspend fun enrollDevice(
+        deviceName: String,
+        osVersion: String,
+        pairingToken: String? = null,
+    ): Result<String> = withContext(Dispatchers.IO) {
         try {
             val (pubKey, _) = keystore.getOrCreateDeviceKeyPair()
-            val payload = mapOf(
+            val payload = mutableMapOf(
                 "name" to deviceName,
                 "device_type" to "android",
                 "os_version" to osVersion,
-                "public_key" to pubKey
+                "public_key" to pubKey,
             )
+            if (!pairingToken.isNullOrBlank()) {
+                payload["enrollment_token"] = pairingToken.trim()
+            }
             val body = gson.toJson(payload).toRequestBody(jsonMediaType)
-            val request = Request.Builder()
+            val reqBuilder = Request.Builder()
                 .url("${getBaseUrl()}/api/v1/net/devices/enroll")
                 .post(body)
-                .build()
+            if (!pairingToken.isNullOrBlank()) {
+                reqBuilder.header("Authorization", "Bearer ${pairingToken.trim()}")
+            }
+            val request = reqBuilder.build()
 
             val response = httpClient.newCall(request).execute()
             if (!response.isSuccessful) {
