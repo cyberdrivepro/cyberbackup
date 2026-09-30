@@ -109,6 +109,10 @@ cyber_download() (
                         mv -f -- "$provenance" "${dest}.source" || return 8
                         return 0
                     fi
+                    if [ "$rc" -eq 22 ] || grep -q -i -E '(404 Not Found|HTTP/[0-9.]+ 404)' "$headers" 2>/dev/null; then
+                        log_debug "Resource at $url returned HTTP 404 (Not Found); skipping remaining retries for this URL."
+                        break 3
+                    fi
                     printf 'Download attempt failed (%s/%s, attempt %s, code %s).\n' "$client" "$profile" "$attempt" "$rc" >&2
                     if [ "$attempt" -lt "$retries" ]; then
                         delay=$((backoff * (1 << (attempt > 5 ? 5 : attempt - 1))))

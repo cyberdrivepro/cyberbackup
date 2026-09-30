@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CyberVPS Transfer Cloud | CyberFleet</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="logo-icon">⚡</div>
+      <div class="brand-text">CYBERVPS <span style="color: var(--primary);">TRANSFER</span></div>
+      <div class="brand-badge">PHASE 1</div>
+    </div>
+    <div class="header-status">
+      <div class="connection-pill">
+        <div id="ws-indicator" class="pulse-dot"></div>
+        <span id="ws-status">LIVE STREAM</span>
+      </div>
+      <button id="btn-logout" class="action-btn" onclick="logout()">LOGOUT</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- URL Intake Section -->
+    <section class="intake-card">
+      <div class="intake-title">⚡ High-Speed Fleet Transfer Intake</div>
+      <form id="form-intake" class="intake-form" onsubmit="submitDownload(event)">
+        <input 
+          type="url" 
+          id="input-url" 
+          class="intake-input" 
+          placeholder="Paste HTTPS or HTTP download URL (e.g. https://releases.ubuntu.com/24.04/ubuntu.iso)..." 
+          required 
+          autocomplete="off"
+        />
+        <button type="submit" id="btn-submit" class="btn-primary">DOWNLOAD</button>
+      </form>
+      <div id="intake-feedback" style="margin-top: 0.5rem; font-size: 0.8rem; display: none;"></div>
+    </section>
+
+    <!-- Fleet Aggregate Overview Metrics -->
+    <section>
+      <div class="section-header">
+        <div class="section-title">📊 Fleet Aggregate Overview</div>
+        <div style="font-size: 0.75rem; color: var(--text-dim);" id="last-updated">Updated: Just now</div>
+      </div>
+      <div class="overview-grid">
+        <div class="metric-card">
+          <div class="metric-label">Fleet Status</div>
+          <div class="metric-value" id="stat-nodes-count">0 / 0</div>
+          <div class="metric-sub" id="stat-nodes-sub">0 Online • 0 Degraded • 0 Offline</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Effective Schedulable CPU</div>
+          <div class="metric-value" id="stat-cpu-total">0.0 vCPU</div>
+          <div class="metric-sub" id="stat-cpu-sub">Real cgroup quota / cpuset</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Effective Available RAM</div>
+          <div class="metric-value" id="stat-ram-total">0 MB</div>
+          <div class="metric-sub" id="stat-ram-sub">0 MB used across fleet</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Available Fleet Storage</div>
+          <div class="metric-value" id="stat-disk-total">0 GB</div>
+          <div class="metric-sub" id="stat-disk-sub">Exclusive node download pools</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Live Aggregate Network</div>
+          <div class="metric-value" id="stat-net-traffic" style="color: var(--primary);">0.0 / 0.0 MB/s</div>
+          <div class="metric-sub">RX / TX interface counters</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Active Fleet Nodes -->
+    <section>
+      <div class="section-header">
+        <div class="section-title">🌐 Connected Fleet Nodes</div>
+        <div style="font-size: 0.8rem; color: var(--text-muted);">Heartbeat frequency: ~5s</div>
+      </div>
+      <div id="nodes-grid" class="nodes-grid">
+        <!-- Rendered dynamically via app.js -->
+        <div style="color: var(--text-dim); font-size: 0.85rem;">Discovering enrolled nodes...</div>
+      </div>
+    </section>
+
+    <!-- Download Center -->
+    <section>
+      <div class="section-header">
+        <div class="section-title">📦 Download Center</div>
+        <div style="display: flex; gap: 0.5rem;">
+          <input 
+            type="text" 
+            id="job-search" 
+            placeholder="Search transfers..." 
+            oninput="filterJobs()" 
+            style="background: var(--bg-card); border: 1px solid var(--border); color: #fff; padding: 4px 8px; border-radius: 6px; font-size: 0.8rem;"
+          />
+        </div>
+      </div>
+      <div class="transfers-container">
+        <table class="transfers-table">
+          <thead>
+            <tr>
+              <th>File & URL</th>
+              <th>Status</th>
+              <th>Assigned Node</th>
+              <th>Size / Progress</th>
+              <th>Speed / ETA</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="transfers-body">
+            <!-- Rendered dynamically via app.js -->
+            <tr>
+              <td colspan="6" style="text-align: center; color: var(--text-dim); padding: 2rem;">No transfers queued or completed yet.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- Modal for Share Links and Job Details -->
+  <div id="modal-container" class="modal-overlay" onclick="closeModal(event)">
+    <div class="modal-content" onclick="event.stopPropagation()">
+      <h3 id="modal-title" style="margin-bottom: 0.75rem; color: var(--primary);">Download Details</h3>
+      <div id="modal-body" style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.5rem; word-break: break-all;"></div>
+      <div style="display: flex; justify-content: flex-end; gap: 0.5rem;">
+        <button id="modal-copy-btn" class="btn-primary" style="padding: 0.4rem 1rem;" onclick="copyModalLink()">COPY LINK</button>
+        <button class="action-btn" onclick="closeModal()">CLOSE</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

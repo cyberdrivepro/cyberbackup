@@ -219,6 +219,100 @@ cybervps persistence install               # Install recovery hooks
 cybervps persistence recover               # Trigger immediate service recovery
 ```
 
+### CyberFleet & CyberTransfer Cloud
+```bash
+# Fleet Controller
+cybervps fleet controller --port 8000      # Run Controller foreground
+cybervps fleet start-controller            # Run Controller 24/7 in persistent session
+cybervps fleet stop-controller             # Stop Controller daemon
+cybervps fleet status                      # View Controller health & aggregate stats
+cybervps fleet nodes                       # List enrolled VPS nodes & live metrics
+cybervps fleet doctor                      # Run fleet diagnostic checks
+
+# VPS Agent (Runs on each managed VPS node)
+cybervps fleet agent --controller http://IP:8000 --secret TOKEN  # Run Agent foreground
+cybervps fleet start-agent                 # Run Agent 24/7 in persistent session
+cybervps fleet stop-agent                  # Stop Agent daemon
+
+# CyberTransfer Jobs
+cybervps transfer add <URL>                # Submit new download job
+cybervps transfer list                     # List recent download jobs
+cybervps transfer probe <URL>              # Safely inspect remote headers with SSRF guard
+cybervps transfer link <JOB_ID> [HOURS]    # Generate HMAC-SHA256 signed Cybershare URL
+cybervps transfer cancel <JOB_ID>          # Cancel active transfer
+cybervps transfer retry <JOB_ID>           # Retry failed or cancelled job
+```
+
+---
+
+## 🌐 CyberVPS Transfer Cloud & CyberFleet (Phase 1 Production)
+
+CyberFleet transforms distributed, rootless Linux VPS instances into a unified high-speed transfer grid coordinated by a central controller.
+
+```
+                        CYBERVPS TRANSFER CLOUD
+
+                           WEB DASHBOARD
+                                |
+                         HTTPS / WebSocket
+                                |
+                    +-------------------------+
+                    |  CYBERFLEET CONTROLLER  |
+                    |                         |
+                    | Node Registry           |
+                    | Heartbeat Watchdog      |
+                    | Multi-Factor Scheduler  |
+                    | Strict SSRF Guard       |
+                    | Safe URL Probe          |
+                    | Telegram Dispatcher     |
+                    | Signed File Delivery    |
+                    +-----------+-------------+
+                                |
+                     outbound secure channel
+                                |
+          +---------------------+----------------------+
+          |                     |                      |
+     VPS AGENT 01          VPS AGENT 02           VPS AGENT N
+          |                     |                      |
+      aria2/curl             aria2/curl              aria2/curl
+      metrics               metrics                 metrics
+      storage               storage                 storage
+```
+
+### Core Components
+
+1. **CyberFleet Controller (`fleet/controller.py`):**
+   - High-throughput FastAPI ASGI application with thread-safe SQLite persistence (WAL mode, mode 0600) designed for PostgreSQL transition.
+   - Node watchdog tracking real-time status: `ONLINE` (<=15s), `DEGRADED` (15–45s), `OFFLINE` (>45s).
+   - Resilient crash recovery: inflight jobs on dead nodes transition safely to `NODE_LOST` and are automatically recovered.
+
+2. **VPS Agent (`fleet/agent.py`):**
+   - Outbound-only agent daemon requiring zero inbound open ports or public IPs on target nodes.
+   - 5-second heartbeats broadcasting container cgroup limits, disk usage, and live moving-average bandwidth.
+
+3. **Intelligent Node Selection (`fleet/scheduler.py`):**
+   - Multi-dimensional scoring formula:
+     $$\text{Score} = (\text{Disk Free} \times 0.25) + (\text{Avail Slots} \times 0.25) + (\text{Real Speed Hist} \times 0.20) + (\text{Live Net Headroom} \times 0.15) + (\text{Reliability} \times 0.15)$$
+   - Disqualifies offline/degraded nodes and nodes below disk safety thresholds (5–10% reserve).
+
+4. **Strict SSRF Protection Guard (`fleet/ssrf.py`):**
+   - Pre-connection & post-redirect DNS validation.
+   - Blocks cloud metadata endpoints (`169.254.169.254`, `fd00:ec2::254`, `100.100.100.200`), loopback (`127.0.0.0/8`, `::1`), private RFC 1918 addresses, and non-HTTP(S) schemes (`file://`, `gopher://`, `ftp://`).
+
+5. **Adaptive Download Engine (`fleet/downloader.py`):**
+   - Multi-connection scaling with `aria2c` (1 stream for tiny files, up to 16 streams for large files), with transparent fallback to `curl`.
+   - Streaming SHA-256 integrity verification and atomic `.part` rename.
+
+6. **Cybershare Signed Expiring Links (`fleet/delivery.py`):**
+   - HMAC-SHA256 signed tokens with configurable TTL (default 24h).
+   - HTTP Range 206 Partial Content streaming using fixed 64KB buffers (zero full-file RAM buffering).
+
+7. **Telegram Bot Integration (`fleet/telegram.py`):**
+   - Dedicated bot interface supporting `/download`, `/jobs`, `/nodes`, `/status`, `/cancel`.
+   - Direct Telegram document delivery for files <= 50MB; automatic fallback to signed Cybershare links for larger files.
+   - Rate-throttled progress updates (max once per 3s).
+
+
 ---
 
 ## 🧪 Automated Testing

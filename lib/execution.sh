@@ -63,6 +63,9 @@ interpret_exit_code() {
         2)
             echo "Misuse of shell builtins or argument syntax error"
             ;;
+        10)
+            echo "Completed with warnings (all required components ready; optional components unavailable)"
+            ;;
         126)
             echo "Execution denied (permission issue or restrictive mount policy)"
             ;;

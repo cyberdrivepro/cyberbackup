@@ -31,15 +31,62 @@ detect_container() {
             CYBER_CONTAINER_TYPE="$found"
         fi
     fi
-    CYBER_PROVIDER_HINT=unknown
-    if compgen -e | grep -q '^DAYTONA_'; then
-        CYBER_PROVIDER_HINT=Daytona
-        CYBER_IS_CONTAINER=true
-    elif [ "$CYBER_IS_CONTAINER" = true ]; then
-        CYBER_PROVIDER_HINT='Generic Container'
-    fi
     CYBER_IS_WSL=false
-    if grep -qis microsoft "$proc/sys/kernel/osrelease"; then CYBER_IS_WSL=true; fi
+    if grep -qis microsoft "$proc/sys/kernel/osrelease" 2>/dev/null; then CYBER_IS_WSL=true; fi
+
+    CYBER_PROVIDER_HINT=unknown
+    # 1. Explicit configuration
+    if [ -n "${CYBERVPS_PROVIDER:-}" ]; then
+        case "${CYBERVPS_PROVIDER,,}" in
+            daytona) CYBER_PROVIDER_HINT=Daytona; CYBER_IS_CONTAINER=true ;;
+            docker) CYBER_PROVIDER_HINT=Docker; CYBER_IS_CONTAINER=true ;;
+            k8s|kubernetes) CYBER_PROVIDER_HINT=Kubernetes; CYBER_IS_CONTAINER=true ;;
+            wsl) CYBER_PROVIDER_HINT=WSL ;;
+            *) CYBER_PROVIDER_HINT="${CYBERVPS_PROVIDER}" ;;
+        esac
+    fi
+
+    # 2. Check connection profile or config.env
+    if [ "$CYBER_PROVIDER_HINT" = "unknown" ]; then
+        local cfg="${CYBERVPS_CONFIG_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/cybervps/config.env}"
+        if [ -f "$cfg" ]; then
+            local p_val
+            p_val="$(awk -F= '$1=="CYBERVPS_PROVIDER" {print $2; exit}' "$cfg" 2>/dev/null || true)"
+            [ -n "$p_val" ] && CYBER_PROVIDER_HINT="$p_val"
+        fi
+    fi
+
+    # 3. Environment & marker detection
+    if [ "$CYBER_PROVIDER_HINT" = "unknown" ]; then
+        if compgen -e 2>/dev/null | grep -q '^DAYTONA_' || [ -d "${root}/var/run/daytona" ] || { [ -z "$root" ] && { [ -d "$HOME/.daytona" ] || command -v daytona >/dev/null 2>&1; }; }; then
+            CYBER_PROVIDER_HINT=Daytona
+            CYBER_IS_CONTAINER=true
+        elif [ -n "${CODESPACES:-}" ] || [ -n "${GITHUB_CODESPACE_TOKEN:-}" ]; then
+            CYBER_PROVIDER_HINT="GitHub Codespaces"
+            CYBER_IS_CONTAINER=true
+        elif [ -n "${GITPOD_WORKSPACE_ID:-}" ]; then
+            CYBER_PROVIDER_HINT=Gitpod
+            CYBER_IS_CONTAINER=true
+        elif [ -n "${REPL_ID:-}" ] || [ -n "${REPLIT_USER:-}" ]; then
+            CYBER_PROVIDER_HINT=Replit
+            CYBER_IS_CONTAINER=true
+        elif [ "$CYBER_IS_WSL" = true ]; then
+            CYBER_PROVIDER_HINT=WSL
+        elif grep -qsE 'kubepods' "$proc/1/cgroup" 2>/dev/null; then
+            CYBER_PROVIDER_HINT=Kubernetes
+            CYBER_IS_CONTAINER=true
+        elif grep -qsE 'docker' "$proc/1/cgroup" 2>/dev/null || [ -f "$root/.dockerenv" ]; then
+            CYBER_PROVIDER_HINT=Docker
+            CYBER_IS_CONTAINER=true
+        elif grep -qsE 'lxc' "$proc/1/cgroup" 2>/dev/null; then
+            CYBER_PROVIDER_HINT=LXC
+            CYBER_IS_CONTAINER=true
+        elif [ "$CYBER_IS_CONTAINER" = true ]; then
+            CYBER_PROVIDER_HINT='Generic Container'
+        elif [ "${CYBER_PLATFORM:-Linux}" = "Linux" ]; then
+            CYBER_PROVIDER_HINT='Generic VPS'
+        fi
+    fi
     return 0
 }
 

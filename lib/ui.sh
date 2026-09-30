@@ -886,7 +886,7 @@ ui_dashboard_menu_grid() {
 
     local mgmt_items=(
         "${C_TEXT}[13]${C_RESET} Jobs (Background Jobs)"
-        "${C_TEXT}[14]${C_RESET} Providers (Daytona / Cloud)"
+        "${C_TEXT}[14]${C_RESET} Remote Access (SSH / RDP / Web)"
         "${C_TEXT}[15]${C_RESET} Fleet Nodes & Sync"
         "${C_TEXT}[16]${C_RESET} Security & Secret Audit"
         "${C_TEXT}[17]${C_RESET} Configuration Manager"

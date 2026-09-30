@@ -49,6 +49,16 @@ install_resolve_mode() {
     export CYBERVPS_INSTALL_MODE
 }
 
+install_mode_has_system_packages() {
+    local mode="${CYBERVPS_INSTALL_MODE:-${INSTALL_MODE:-rootless}}"
+    case "$mode" in
+        root|hybrid)
+            [ "${CYBER_SYSTEM_PACKAGES:-UNAVAILABLE}" = AVAILABLE ] && cyber_can_admin
+            ;;
+        *) return 1 ;;
+    esac
+}
+
 install_profile_components() {
     local profile="${1,,}" component
     INSTALL_COMPONENTS=(core)
@@ -137,14 +147,16 @@ install_package_names() {
         apt-get:rust) INSTALL_PACKAGES=(rustc cargo) ;;
         *:rust) INSTALL_PACKAGES=(rust cargo) ;;
         apt-get:desktop) INSTALL_PACKAGES=(xfce4 xrdp) ;;
+        apt-get:nginx|dnf:nginx|yum:nginx|apk:nginx|pacman:nginx|zypper:nginx|*:nginx) INSTALL_PACKAGES=(nginx) ;;
+        apt-get:redis) INSTALL_PACKAGES=(redis-server redis-tools) ;;
+        dnf:redis|yum:redis|zypper:redis|apk:redis|pacman:redis|*:redis) INSTALL_PACKAGES=(redis) ;;
         *) return 3 ;;
     esac
 }
 
 install_system_component() {
     local component="$1" manager="${CYBER_PACKAGE_MANAGER:-}"
-    [ "${CYBERVPS_INSTALL_MODE:-rootless}" != rootless ] || return 3
-    cyber_can_admin || return 3
+    install_mode_has_system_packages || return 3
     if [ "$component" = cybervm ]; then
         case "$manager" in
             apt-get) INSTALL_PACKAGES=(qemu-system-x86 qemu-system-arm qemu-utils) ;;
@@ -379,7 +391,7 @@ install_component() {
     install_component_ready "$component" && return 0
     case "$component" in
         core|build|desktop|cybervm)
-            if [ "$mode" != rootless ]; then
+            if install_mode_has_system_packages; then
                 install_system_component "$component" && install_component_ready "$component"
                 return $?
             fi
@@ -390,7 +402,7 @@ install_component() {
             esac
             ;;
         python|node|sqlite|go|rust)
-            if [ "$mode" = root ]; then
+            if install_mode_has_system_packages; then
                 if install_system_component "$component" && install_component_ready "$component"; then return 0; fi
                 log_warn "Native $component unavailable or below minimum version; trying portable installation."
             fi
@@ -402,9 +414,27 @@ install_component() {
                 rust) install_rust ;;
             esac
             ;;
+        nginx|redis)
+            if install_mode_has_system_packages; then
+                if install_system_component "$component" && install_component_ready "$component"; then return 0; fi
+                log_warn "Native $component unavailable; trying portable fallback."
+            fi
+            case "$component" in
+                nginx) install_mamba_packages nginx ;;
+                redis)
+                    log_warn "Portable Redis server unavailable in rootless mode without system packages."
+                    return 8
+                    ;;
+            esac
+            ;;
         micromamba) install_micromamba ;;
-        pm2|pnpm) install_node_global_tool "$component" ;;
-        nginx|redis) install_mamba_packages "$component" ;;
+        pm2|pnpm)
+            if ! install_component_ready node; then
+                log_warn "$component skipped: requires Node.js and npm."
+                return 7
+            fi
+            install_node_global_tool "$component"
+            ;;
         cloudflared) install_cloudflared ;;
         ttyd)
             local arch="$CYBER_ARCH"
@@ -468,6 +498,18 @@ install_profile() {
     INSTALL_RESULTS=()
     for component in "${INSTALL_COMPONENTS[@]}"; do
         rc=0
+        case "$component" in
+            pm2|pnpm)
+                if ! install_component_ready node; then
+                    status="SKIP_DEPENDENCY"
+                    rc=7
+                    optional_fail=$((optional_fail + 1))
+                    INSTALL_RESULTS+=("$status $component (requires node)")
+                    printf '%s\t%s\t%s\n' "$component" "$status" "$rc" >> "$report"
+                    continue
+                fi
+                ;;
+        esac
         if { case "$component" in
             nginx|redis) install_run_script "$CYBERVPS_ROOT/installers/$component.sh" ;;
             *) install_component "$component" ;;

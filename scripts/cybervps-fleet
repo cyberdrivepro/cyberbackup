@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# scripts/cybervps-fleet — CyberFleet Distributed Cluster CLI Wrapper
+set -euo pipefail
+
+CYBERVPS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/fleet.sh
+source "$CYBERVPS_DIR/lib/fleet.sh"
+
+cybervps_fleet_cli "$@"

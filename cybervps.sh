@@ -37,6 +37,14 @@ source "$CYBERVPS_DIR/lib/jobs.sh"
 source "$CYBERVPS_DIR/lib/proot.sh"
 # shellcheck source=lib/auto.sh
 source "$CYBERVPS_DIR/lib/auto.sh"
+# shellcheck source=lib/connect.sh
+source "$CYBERVPS_DIR/lib/connect.sh"
+# shellcheck source=lib/public.sh
+source "$CYBERVPS_DIR/lib/public.sh"
+# shellcheck source=lib/fleet.sh
+source "$CYBERVPS_DIR/lib/fleet.sh"
+# shellcheck source=lib/transfer.sh
+source "$CYBERVPS_DIR/lib/transfer.sh"
 source "$CYBERVPS_DIR/lib/cli.sh"
 
 # Ensure user PATH includes user-space locations
@@ -224,6 +232,11 @@ run_menu_action() {
     echo
     if [ "$exit_code" -eq 0 ]; then
         ui_success "${action_title} completed successfully."
+        ui_pause
+    elif [ "$exit_code" -eq 10 ]; then
+        local reason
+        reason="$(interpret_exit_code "$exit_code")"
+        ui_warning "${action_title} completed with warnings: ${reason}"
         ui_pause
     else
         local reason
@@ -506,6 +519,7 @@ handle_telegram_submenu() {
         echo -e "  ${C_BWHITE}[5]${C_RESET} Set Authorized Admin User IDs"
         echo -e "  ${C_BWHITE}[6]${C_RESET} Store / Update Bot Token (0600)"
         echo -e "  ${C_BWHITE}[7]${C_RESET} View Telegram Logs"
+        echo -e "  ${C_BWHITE}[8]${C_RESET} Run Telegram Subsystem Doctor"
         echo -e "  ${C_BWHITE}[0]${C_RESET} Return to Main Menu"
         echo
         local choice=""
@@ -545,6 +559,10 @@ handle_telegram_submenu() {
                 ;;
             7)
                 telegram_logs 30
+                ui_pause
+                ;;
+            8)
+                telegram_doctor
                 ui_pause
                 ;;
             0|[qQ]*)
@@ -724,6 +742,86 @@ handle_auto_menu() {
     ui_pause
 }
 
+handle_restore_menu() {
+    clear 2>/dev/null || echo
+    ui_header
+    echo -e "${C_BCYAN}=== CyberVPS Backup Restore ===${C_RESET}\n"
+
+    local found_backups=()
+    local search_dirs=("$CYBERVPS_DIR/downloads" "$CYBER_HOME/downloads" "$CYBER_HOME/backups")
+    for d in "${search_dirs[@]}"; do
+        [ -d "$d" ] || continue
+        for b in "$d"/cybervps-backup-*.tar.*; do
+            if [ -f "$b" ]; then
+                found_backups+=("$b")
+            fi
+        done
+    done
+
+    if [ "${#found_backups[@]}" -eq 0 ]; then
+        echo -e "${C_TEXT_MUTED}No backup archives found in downloads/ or backups/.${C_RESET}\n"
+        echo -e "  ${C_BWHITE}[P]${C_RESET} Provide custom path to backup archive"
+        echo -e "  ${C_BWHITE}[0]${C_RESET} Return to Main Menu"
+        echo
+        local res_choice=""
+        read -rp "Restore Selection: " res_choice || return 0
+        case "$res_choice" in
+            [pP]*)
+                local custom_path=""
+                read -rp "Enter full path to backup file: " custom_path
+                if [ -n "$custom_path" ] && [ -f "$custom_path" ]; then
+                    run_menu_action "Restore Backup" "$CYBERVPS_DIR/restore.sh" "restore" --archive "$custom_path"
+                else
+                    ui_warning "File does not exist: '$custom_path'"
+                    ui_pause
+                fi
+                ;;
+            *)
+                return 0
+                ;;
+        esac
+    else
+        echo -e "${C_BWHITE}Discovered Backup Archives:${C_RESET}"
+        local idx=1
+        for b in "${found_backups[@]}"; do
+            local bsize
+            bsize="$(du -h "$b" 2>/dev/null | awk '{print $1}')"
+            echo -e "  ${C_BWHITE}[${idx}]${C_RESET} $(basename "$b") ${C_TEXT_MUTED}(${bsize} in $(dirname "$b"))${C_RESET}"
+            idx=$((idx + 1))
+        done
+        echo -e "  ${C_BWHITE}[P]${C_RESET} Provide custom path"
+        echo -e "  ${C_BWHITE}[0]${C_RESET} Return to Main Menu"
+        echo
+        local sel=""
+        read -rp "Select archive to restore [1-${#found_backups[@]}]: " sel || return 0
+        if [[ "$sel" =~ ^[0-9]+$ ]] && [ "$sel" -ge 1 ] && [ "$sel" -le "${#found_backups[@]}" ]; then
+            local chosen="${found_backups[$((sel - 1))]}"
+            run_menu_action "Restore Backup" "$CYBERVPS_DIR/restore.sh" "restore" --archive "$chosen"
+        elif [[ "$sel" =~ ^[pP] ]]; then
+            local custom_path=""
+            read -rp "Enter full path to backup file: " custom_path
+            if [ -n "$custom_path" ] && [ -f "$custom_path" ]; then
+                run_menu_action "Restore Backup" "$CYBERVPS_DIR/restore.sh" "restore" --archive "$custom_path"
+            else
+                ui_warning "File does not exist: '$custom_path'"
+                ui_pause
+            fi
+        fi
+    fi
+}
+
+handle_virtual_shell() {
+    detect_environment
+    if [ "${CYBER_PRIVILEGE_MODE:-ROOTLESS}" = "ROOT" ] || [ "${CYBER_PRIVILEGE_MODE:-ROOTLESS}" = "CONTAINER_ROOT" ] || [ "${CYBER_IS_ROOT:-false}" = true ]; then
+        echo -e "\n${C_PRIMARY}${C_BOLD}CyberVPS Host Shell (Native Root)${C_RESET}"
+        echo -e "${C_TEXT_MUTED}Active Mode: ${C_TEXT}${CYBER_PRIVILEGE_MODE}${C_TEXT_MUTED} | User: ${C_TEXT}${CYBER_USER} (UID ${CYBER_UID})${C_RESET}"
+        echo -e "${C_TEXT_MUTED}Type ${C_PRIMARY}'exit'${C_TEXT_MUTED} to return to CyberVPS dashboard.\n${C_RESET}"
+        CYBERVPS_HOST_SHELL=1 "${SHELL:-/bin/bash}" -l
+        return 0
+    fi
+    cyber_guest_shell "$@"
+}
+
 # Render Dashboard (CYBER DARK Modern UI)
 show_dashboard() {
     clear 2>/dev/null || echo
@@ -762,7 +860,7 @@ main_loop() {
 
         case "$choice" in
             1)
-                run_menu_action "Restore Backup" "$CYBERVPS_DIR/restore.sh" "restore"
+                handle_restore_menu
                 ;;
             2)
                 run_menu_action "Install / Rebuild" "$CYBERVPS_DIR/fresh-install.sh" "fresh-install"
@@ -807,11 +905,10 @@ main_loop() {
                 handle_jobs_submenu
                 ;;
             14)
-                handle_status_menu
+                handle_remote_access_menu
                 ;;
             15)
-                python3 "$CYBERVPS_DIR/scripts/fleet_control.py" fleet 2>/dev/null || echo "Fleet nodes: Local node active"
-                ui_pause
+                handle_fleet_submenu
                 ;;
             16)
                 python3 "$CYBERVPS_DIR/scripts/security_audit.py" "$CYBERVPS_DIR" 2>/dev/null || echo "Security audit: Clean"
@@ -827,7 +924,10 @@ main_loop() {
                 handle_auto_menu
                 ;;
             [sS]*)
-                cyber_guest_shell
+                handle_virtual_shell
+                ;;
+            [tT]*)
+                handle_transfer_submenu
                 ;;
             [dD]*)
                 handle_diagnostics_menu
@@ -899,6 +999,26 @@ elif [ "${1:-}" = "telegram" ]; then
 elif [ "${1:-}" = "job" ]; then
     shift
     handle_job_cli "$@"
+    exit $?
+elif [ "${1:-}" = "connect" ]; then
+    shift
+    cybervps_connect_cli "$@"
+    exit $?
+elif [ "${1:-}" = "public" ]; then
+    shift
+    cybervps_public_cli "$@"
+    exit $?
+elif [ "${1:-}" = "guest" ]; then
+    shift
+    cyber_guest_cli "$@"
+    exit $?
+elif [ "${1:-}" = "fleet" ]; then
+    shift
+    cybervps_fleet_cli "$@"
+    exit $?
+elif [ "${1:-}" = "transfer" ]; then
+    shift
+    cybervps_transfer_cli "$@"
     exit $?
 elif [ "$#" -gt 0 ] && [ "${1:-}" != "--menu" ]; then
     cyber_control_cli "$@"

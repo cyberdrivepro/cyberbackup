@@ -11,6 +11,8 @@ LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$LIB_DIR/common.sh"
 # shellcheck source=lib/download.sh
 source "$LIB_DIR/download.sh"
+# shellcheck source=lib/ui.sh
+source "$LIB_DIR/ui.sh"
 
 cyber_proot_arch() {
     local arch="${CYBER_ARCH:-$(uname -m)}"
@@ -56,6 +58,19 @@ cyber_proot_ensure_bin() {
         return 0
     fi
 
+    # Try native distro package manager first if admin access is available
+    if [ "${CYBER_CAN_ADMIN:-false}" = true ] && [ "${CYBER_SYSTEM_PACKAGES:-UNAVAILABLE}" = AVAILABLE ]; then
+        if [ "${CYBER_PACKAGE_MANAGER:-}" = apt-get ] || [ "${CYBER_PACKAGE_MANAGER:-}" = apt ]; then
+            log_info "Attempting native proot installation via system package manager..."
+            cyber_run_privileged env DEBIAN_FRONTEND=noninteractive apt-get update -y >/dev/null 2>&1 || true
+            cyber_run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends proot >/dev/null 2>&1 || true
+            if bin="$(cyber_proot_find_bin)" && cyber_proot_test_bin "$bin"; then
+                log_ok "Native PRoot package ready at $bin"
+                return 0
+            fi
+        fi
+    fi
+
     log_info "Acquiring portable PRoot engine for architecture $(cyber_proot_arch)..."
     local arch
     arch="$(cyber_proot_arch)"
@@ -63,23 +78,34 @@ cyber_proot_ensure_bin() {
     ensure_directory "$dest_dir" 0755
     local dest_file="$dest_dir/proot"
 
-    local mirrors=(
-        "https://raw.githubusercontent.com/cyberdrivepro/cyberroot/main/bin/proot-${arch}"
-        "https://github.com/proot-me/proot/releases/download/v5.4.0/proot-v5.4.0-${arch}"
-        "https://raw.githubusercontent.com/termux/termux-packages/master/packages/proot/proot-${arch}"
-    )
+    local mirrors=()
+    if [ "$arch" = "x86_64" ]; then
+        mirrors+=(
+            "https://proot.gitlab.io/proot/bin/proot"
+            "https://raw.githubusercontent.com/proot-me/proot-static-builds/master/static/proot-x86_64"
+        )
+    else
+        mirrors+=(
+            "https://raw.githubusercontent.com/proot-me/proot-static-builds/master/static/proot-${arch}"
+        )
+    fi
 
     local downloaded=0
+    local temp_dest
+    temp_dest="$(mktemp "${dest_file}.dl.XXXXXX")" || return 8
     for url in "${mirrors[@]}"; do
         log_debug "Attempting proot download from: $url"
-        if cyber_download "$url" "$dest_file"; then
-            chmod 0755 "$dest_file" 2>/dev/null || true
-            if cyber_proot_test_bin "$dest_file"; then
+        if cyber_download "$url" "$temp_dest"; then
+            chmod 0755 "$temp_dest" 2>/dev/null || true
+            if [ -s "$temp_dest" ] && cyber_proot_test_bin "$temp_dest"; then
+                mv -f "$temp_dest" "$dest_file"
                 downloaded=1
                 break
             fi
         fi
+        : > "$temp_dest"
     done
+    rm -f "$temp_dest"
 
     if [ "$downloaded" -eq 1 ]; then
         log_ok "Portable PRoot engine ready at $dest_file"
@@ -87,7 +113,7 @@ cyber_proot_ensure_bin() {
         return 0
     fi
 
-    log_error "Could not acquire a functional PRoot binary for architecture $arch."
+    log_warn "Could not acquire a functional PRoot binary for architecture $arch."
     return 3
 }
 
@@ -275,6 +301,15 @@ cyber_guest_exec() {
 }
 
 cyber_guest_shell() {
+    detect_environment
+    if [ "${CYBER_PRIVILEGE_MODE:-ROOTLESS}" = "ROOT" ] || [ "${CYBER_PRIVILEGE_MODE:-ROOTLESS}" = "CONTAINER_ROOT" ] || [ "${CYBER_IS_ROOT:-false}" = true ]; then
+        echo -e "\n${C_PRIMARY}${C_BOLD}CyberVPS Host Shell (Native Root)${C_RESET}"
+        echo -e "${C_TEXT_MUTED}Active Mode: ${C_TEXT}${CYBER_PRIVILEGE_MODE}${C_TEXT_MUTED} | User: ${C_TEXT}${CYBER_USER} (UID ${CYBER_UID})${C_RESET}"
+        echo -e "${C_TEXT_MUTED}Type ${C_PRIMARY}'exit'${C_TEXT_MUTED} to return to CyberVPS.\n${C_RESET}"
+        CYBERVPS_HOST_SHELL=1 "${SHELL:-/bin/bash}" -l
+        return 0
+    fi
+
     local name="${1:-main}"
     cyber_guest_is_ready "$name" || {
         cyber_guest_install_rootfs "$name" || return $?

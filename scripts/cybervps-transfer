@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# scripts/cybervps-transfer — CyberTransfer Management CLI Wrapper
+set -euo pipefail
+
+CYBERVPS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/transfer.sh
+source "$CYBERVPS_DIR/lib/transfer.sh"
+
+cybervps_transfer_cli "$@"

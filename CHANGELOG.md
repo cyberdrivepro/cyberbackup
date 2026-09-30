@@ -5,6 +5,58 @@ All notable changes to the CyberVPS project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-09-30
+
+### Added
+- **CyberVPS Transfer Cloud + CyberFleet Subsystem (`fleet/`, `lib/fleet.sh`, `lib/transfer.sh`):**
+  - **CyberFleet Controller (`fleet/controller.py`, `fleet/database.py`):**
+    - High-performance FastAPI ASGI application with thread-safe SQLite persistence (WAL mode, auto-migration, mode 0600).
+    - Architecture designed for seamless future PostgreSQL adapter plug-in.
+    - Automated background node watchdog tracking health (`ONLINE` <=15s, `DEGRADED` 15–45s, `OFFLINE` >45s).
+    - Node state recovery (`NODE_LOST` job reassignment) and resilient crash recovery.
+  - **VPS Agent (`fleet/agent.py`):**
+    - Lightweight, outbound-only daemon (no inbound ports required on managed nodes).
+    - Periodic 5-second heartbeats sending live telemetry and dynamic job poll/dispatch loop.
+    - User-space execution with low memory footprint (<30MB RSS).
+  - **Real Effective Resource Metrics (`fleet/metrics.py`):**
+    - Accurate container-aware cgroup v2 (`cpu.max`, `cpuset.cpus`, `memory.max`, `memory.current`) and cgroup v1 fallback.
+    - Live network traffic monitoring from `/proc/net/dev` with exponential moving average (EMA) for RX/TX MB/s.
+    - Real-time disk utilization checks and safety headroom reserves (5–10%).
+    - Distinct separation between live traffic metrics, benchmark capacity, and actual job download speeds.
+  - **Intelligent Download-Node Scheduler (`fleet/scheduler.py`):**
+    - Multi-dimensional scoring algorithm weighting available disk, active job concurrency, live network load, historical real download speeds, effective RAM, and reliability history.
+    - Candidate exclusion on offline status or insufficient disk.
+    - Human-readable selection reason logged and exposed via API/CLI.
+  - **Strict SSRF Protection Engine (`fleet/ssrf.py`):**
+    - Pre-connection and post-redirect DNS validation rejecting loopback (`127.0.0.0/8`, `::1`), private RFC 1918 networks, CGNAT, link-local, and cloud metadata endpoints (`169.254.169.254`, `fd00:ec2::254`, `100.100.100.200`).
+    - Protocol enforcement: HTTP and HTTPS only. Dangerous schemes (`file://`, `gopher://`, `ftp://`, `data:`) strictly blocked.
+    - Embedded authority credentials rejected.
+  - **Safe URL Probe Engine (`fleet/probe.py`):**
+    - Fast HTTP HEAD probe with `Range: bytes=0-0` GET fallback.
+    - Extracts Content-Disposition filename, Content-Length, Content-Type, Accept-Ranges, and ETag.
+    - Re-validates every redirect hop through the strict SSRF guard.
+  - **Adaptive Download Engine (`fleet/downloader.py`):**
+    - Multi-stream downloading via `aria2c` with adaptive connection scaling (1 for tiny, 2–4 small, 4–8 medium, 8–16 large files; 1 if Accept-Ranges unsupported).
+    - Transparent fallback to `curl` with resume capability (`-C -`).
+    - Atomic `.part` file renaming, SHA-256 integrity verification, and disk space pre-check.
+  - **Real-Time Website Dashboard (`fleet/static/`):**
+    - Pure ANSI/CSS CYBER DARK design system (zero external CDN or node_modules dependencies).
+    - Live WebSocket stream (`/api/v1/ws/dashboard`) with automatic reconnection and aggregate telemetry.
+    - Interactive node cards displaying status, live RX/TX, benchmark capacity, and real download speeds.
+    - Download intake bar, active transfer center, progress bars, pause/cancel controls, and Cybershare modal.
+  - **Cybershare Secure Public / Expiring Links (`fleet/delivery.py`):**
+    - HMAC-SHA256 signed URL tokens with configurable expiration (default 24h).
+    - High-efficiency HTTP Range 206 Partial Content chunked streaming (64KB chunks) with zero full-file RAM buffering.
+    - Strict path traversal guard (`is_safe_path`).
+  - **Telegram Bot Remote Control & Delivery (`fleet/telegram.py`):**
+    - Multi-command bot daemon (`/start`, `/download`, `/jobs`, `/nodes`, `/status`, `/cancel`).
+    - Admin user ID authorization checks rejecting unauthorized callers.
+    - Rate-throttled live progress messages (max once every 3 seconds).
+    - Direct document upload for files <=50MB; automatic fallback to signed Cybershare download link for larger files.
+  - **CLI Integration & Executables (`fleet/cli.py`, `scripts/cybervps-fleet`, `scripts/cybervps-transfer`):**
+    - Seamless `cybervps fleet` and `cybervps transfer` CLI command suites.
+    - `cybervps fleet doctor` diagnostic command for instant readiness checks.
+
 ## [2.0.0] - 2026-09-28
 
 ### Added

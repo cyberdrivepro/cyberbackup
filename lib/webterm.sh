@@ -318,7 +318,7 @@ handle_webterm_cli() {
 
 # Passwords are data; never source this file or print it in status output.
 webterm_set_password() {
-    local username="${1:-}" password="${2:-}"
+    local username="$1" password="$2"
     [[ "$username" =~ ^[a-zA-Z0-9_-]+$ ]] || return 2
     [ "${#password}" -ge 12 ] || { log_error "Password must contain at least 12 characters."; return 2; }
     [[ "$password" != *$'\n'* && "$password" != *$'\r'* ]] || return 2

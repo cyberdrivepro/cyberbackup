@@ -85,6 +85,18 @@ exec bash "${CYBERVPS_ROOT:-$HOME/cyberbackup}/cybervps.sh" service stop "$@"
 EOF
     chmod 0755 "${HOME}/bin/cybervps-stop"
 
+    cat << 'EOF' > "${HOME}/bin/cybervps-fleet"
+#!/usr/bin/env bash
+exec bash "${CYBERVPS_ROOT:-$HOME/cyberbackup}/cybervps.sh" fleet "$@"
+EOF
+    chmod 0755 "${HOME}/bin/cybervps-fleet"
+
+    cat << 'EOF' > "${HOME}/bin/cybervps-transfer"
+#!/usr/bin/env bash
+exec bash "${CYBERVPS_ROOT:-$HOME/cyberbackup}/cybervps.sh" transfer "$@"
+EOF
+    chmod 0755 "${HOME}/bin/cybervps-transfer"
+
     setup_login_recovery
     return 0
 }

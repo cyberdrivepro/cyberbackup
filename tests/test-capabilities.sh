@@ -28,6 +28,7 @@ systemctl() { [ "$fixture_systemd" = true ]; }
 apt-get() { return 0; }
 nproc() { echo 64; }
 getconf() { echo 64; }
+daytona() { return 1; }
 for v in $(compgen -e | grep '^DAYTONA_' 2>/dev/null || true); do unset "$v"; done
 unset CYBERROOT_GUEST CYBERROOT_PREFIX container || true
 fixture_uid=0 fixture_sudo=false fixture_systemd=false

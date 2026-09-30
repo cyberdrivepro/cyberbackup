@@ -28,6 +28,7 @@ CYBERVPS_INSTALL_MODE=rootless
 rc=0; install_system_component python || rc=$?
 check test "$rc" -eq 3
 check test ! -e "$TEST_TMP/packages"
+CYBER_SYSTEM_PACKAGES=AVAILABLE
 CYBERVPS_INSTALL_MODE=root
 for manager in apt-get dnf yum apk pacman zypper; do
     CYBER_PACKAGE_MANAGER="$manager"

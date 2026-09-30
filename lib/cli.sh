@@ -37,10 +37,14 @@ cyber_control_cli() {
             # shellcheck source=lib/auto.sh
             source "$CYBERVPS_ROOT/lib/auto.sh"
             cyber_auto_install "$@" ;;
-        shell|guest)
+        shell)
             # shellcheck source=lib/proot.sh
             source "$CYBERVPS_ROOT/lib/proot.sh"
             cyber_guest_shell "$@" ;;
+        guest)
+            # shellcheck source=lib/cyberroot.sh
+            source "$CYBERVPS_ROOT/lib/cyberroot.sh"
+            cyber_guest_cli "$@" ;;
         host)
             CYBERVPS_HOST_SHELL=1 exec "${SHELL:-/bin/bash}" -l ;;
         apt)
@@ -48,9 +52,16 @@ cyber_control_cli() {
             source "$CYBERVPS_ROOT/lib/proot.sh"
             cyber_guest_apt "$@" ;;
         root) cyberroot_cli "$@" ;;
+        public)
+            # shellcheck source=lib/public.sh
+            source "$CYBERVPS_ROOT/lib/public.sh"
+            cybervps_public_cli "$@" ;;
         vm) source "$CYBERVPS_ROOT/lib/cybervm.sh"; cybervm_cli "$@" ;;
         desktop) source "$CYBERVPS_ROOT/lib/desktop.sh"; desktop_cli "$@" ;;
         containers) source "$CYBERVPS_ROOT/lib/containers.sh"; containers_cli "$@" ;;
+        connect)
+            source "$CYBERVPS_ROOT/lib/connect.sh"
+            cybervps_connect_cli "$@" ;;
         nodes|fleet|files|secret) python3 "$CYBERVPS_ROOT/scripts/fleet_control.py" "$command" "$@" ;;
         provider)
             [ "${1:-}" = daytona ] || { log_error 'Supported provider: daytona'; return 3; }

@@ -113,7 +113,7 @@ print_system_summary() {
     echo "CPUs:         $CYBER_NPROC effective vCPU / $CYBER_HOST_NPROC host-visible threads"
     echo "RAM:          ${CYBER_RAM_TOTAL_MB}MB effective (~${CYBER_RAM_AVAIL_MB}MB available); ${CYBER_HOST_RAM_TOTAL_MB}MB host-visible"
     echo "Cgroups:      $CYBER_CGROUP_VERSION (resource source: $CYBER_RESOURCE_SOURCE)"
-    echo "Disk:         ~${CYBER_DISK_FREE_MB}MB free in $CYBER_HOME ($CYBER_DISK_FSTYPE; persistence UNKNOWN)"
+    echo "Disk:         ~${CYBER_DISK_FREE_MB}MB free in $CYBER_HOME ($CYBER_DISK_FSTYPE)"
     print_capability_summary
     echo "Backends:     ${CYBER_BACKENDS[*]:-none}"
     echo "==============================="
