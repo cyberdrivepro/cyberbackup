@@ -1020,6 +1020,10 @@ elif [ "${1:-}" = "transfer" ]; then
     shift
     cybervps_transfer_cli "$@"
     exit $?
+elif [ "${1:-}" = "store" ]; then
+    shift
+    cybervps_store_cli "$@"
+    exit $?
 elif [ "$#" -gt 0 ] && [ "${1:-}" != "--menu" ]; then
     cyber_control_cli "$@"
     exit $?

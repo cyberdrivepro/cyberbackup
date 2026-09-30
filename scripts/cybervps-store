@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# scripts/cybervps-store — CyberStore Distributed Storage CLI Wrapper
+set -euo pipefail
+
+CYBERVPS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/transfer.sh
+source "$CYBERVPS_DIR/lib/transfer.sh"
+
+cybervps_store_cli "$@"

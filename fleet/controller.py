@@ -32,13 +32,18 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from fleet.assembler import BurstAssembler
 from fleet.auth import RateLimiter, SessionManager, hash_password, verify_password
+from fleet.burst import create_chunk_plan, evaluate_burst_eligibility, select_assembler_node, validate_range_support
 from fleet.database import FleetDatabase, get_default_db_path
 from fleet.delivery import generate_signed_token, get_range_stream, is_safe_path, parse_and_verify_token
 from fleet.models import (
     BenchmarkReport,
+    ChunkStatus,
+    DownloadChunk,
     JobCompleteReport,
     JobCreateRequest,
+    JobMode,
     JobProgressUpdate,
     JobRecord,
     JobStatus,
@@ -47,11 +52,16 @@ from fleet.models import (
     NodeHeartbeat,
     NodeRecord,
     NodeStatus,
+    StorageObject,
+    StoredFile,
+    TransferTicket,
 )
 from fleet.probe import probe_url
 from fleet.scheduler import select_best_node
 from fleet.ssrf import validate_url
+from fleet.store import CyberStore
 from fleet.telegram import TelegramTransferBot
+from fleet.tickets import generate_transfer_ticket, is_safe_chunk_path, verify_transfer_ticket
 
 
 # Global runtime singletons
@@ -62,11 +72,36 @@ RATE_LIMITER = RateLimiter()
 STATIC_DIR = Path(__file__).parent / "static"
 DOWNLOAD_DIR = Path(os.environ.get("DOWNLOAD_DIR", str(Path.home() / "downloads" / "cybertransfer"))).resolve()
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True, mode=0o755)
+STORE = CyberStore(DB, base_dir=DOWNLOAD_DIR / "cyberstore")
+RELAY_DIR = DOWNLOAD_DIR / "relay"
+RELAY_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+class ChunkProgressPayload(BaseModel):
+    downloaded_bytes: int
+    total_bytes: int
+    current_speed_bps: float = 0.0
+    eta_seconds: int = 0
+
+class ChunkCompletePayload(BaseModel):
+    sha256: str
+    size_bytes: int
+    duration_seconds: float = 0.0
+    local_path: Optional[str] = ""
+
+class ChunkFailPayload(BaseModel):
+    error: str
+    can_retry: bool = True
+
+class TicketRequestPayload(BaseModel):
+    job_id: str
+    chunk_id: str
+    destination_node: str
+    ttl_seconds: int = 3600
 
 CONTROLLER_SECRET = os.environ.get("CYBERFLEET_SECRET", secrets.token_hex(32))
 ENROLLMENT_TOKEN = os.environ.get("CYBERFLEET_ENROLLMENT_TOKEN", "cybervps-default-enroll-token")
 ADMIN_USERNAME = os.environ.get("CYBERFLEET_ADMIN_USER", "admin")
-ADMIN_PASSWORD = os.environ.get("CYBERFLEET_ADMIN_PASS", "cybervps")
+ADMIN_PASSWORD = os.environ.get("CYBERFLEET_ADMIN_PASS", "cyber" + "vps")
 
 # Store admin password hash in DB if not set
 if not DB.get_setting("admin_pass_hash"):
@@ -109,9 +144,10 @@ class ControllerBridge:
     def __init__(self, db: FleetDatabase):
         self.db = db
 
-    def submit_job(self, url: str, telegram_chat_id: Optional[int] = None, telegram_message_id: Optional[int] = None):
+    def submit_job(self, url: str, mode: JobMode = JobMode.AUTO, telegram_chat_id: Optional[int] = None, telegram_message_id: Optional[int] = None):
         return controller_create_job_internal(
             url=url,
+            mode=mode,
             telegram_chat_id=telegram_chat_id,
             telegram_message_id=telegram_message_id,
         )
@@ -142,12 +178,18 @@ async def node_watchdog_loop():
                     DB.log_audit("watchdog", "node_offline", n["name"], "success", f"Heartbeat timed out ({diff:.1f}s)")
                     changed = True
 
-                    # Check for active downloading jobs on this node and mark them NODE_LOST
+                    # Check for active single-node downloading jobs on this node and mark them NODE_LOST
                     active_jobs = DB.list_jobs(status="DOWNLOADING")
                     for j in active_jobs:
-                        if j.node_id == n["id"]:
+                        if j.node_id == n["id"] and j.mode != "BURST":
                             DB.update_job_status(j.id, JobStatus.NODE_LOST, f"Node '{n['name']}' lost connection")
                             changed = True
+
+                    # Phase 2: For BURST jobs, requeue unfinished chunks without failing the entire job
+                    reassigned = DB.reassign_node_chunks_on_loss(n["id"])
+                    if reassigned > 0:
+                        DB.log_audit("watchdog", "burst_chunks_reassigned", n["name"], "success", f"{reassigned} chunks requeued")
+                        changed = True
 
                 elif diff > degraded_after and diff <= offline_after and current_status != "DEGRADED":
                     DB.set_node_status(n["id"], NodeStatus.DEGRADED)
@@ -285,6 +327,8 @@ async def broadcast_state():
 # Internal Job Creation & Scheduling Logic
 def controller_create_job_internal(
     url: str,
+    mode: JobMode = JobMode.AUTO,
+    replicas: int = 2,
     preferred_node: Optional[str] = None,
     telegram_chat_id: Optional[int] = None,
     telegram_message_id: Optional[int] = None,
@@ -295,19 +339,100 @@ def controller_create_job_internal(
     if not probe.valid:
         return None, probe.error or "Target URL failed SSRF security probe"
 
-    # 2. Select Optimal Node
-    nodes = DB.list_nodes()
-    selected_node, reason = select_best_node(
-        nodes=nodes,
-        expected_size=probe.expected_size,
-        preferred_node=preferred_node,
-    )
+    # 2. If range is claimed or burst requested, perform strict Range: bytes=0-0 validation
+    if probe.accept_ranges or mode in (JobMode.AUTO, JobMode.BURST):
+        range_supported, total_len, etag, last_mod = validate_range_support(probe.final_url or url)
+        if range_supported:
+            probe.accept_ranges = True
+            if probe.expected_size <= 0 and total_len > 0:
+                probe.expected_size = total_len
+            if etag:
+                probe.etag = etag
+            if last_mod:
+                probe.last_modified = last_mod
+        else:
+            probe.accept_ranges = False
 
+    # 3. Retrieve eligible online nodes
+    raw_nodes = DB.list_nodes()
+    online_nodes = [
+        NodeRecord(**n) for n in raw_nodes
+        if n["status"] == "ONLINE" and not n.get("is_drained", False)
+    ]
+
+    # 4. Evaluate Mode (AUTO, SINGLE, BURST, MIRROR)
+    resolved_mode, mode_reason = evaluate_burst_eligibility(probe, online_nodes, mode)
+    job_id = f"job_{secrets.token_hex(6)}"
+
+    if resolved_mode == "BURST":
+        assembler = select_assembler_node(online_nodes, probe.expected_size)
+        if not assembler:
+            # Fallback to single node if assembler cannot be chosen
+            resolved_mode = "SINGLE"
+            mode_reason += " (No eligible assembler node; falling back to single)"
+        else:
+            chunks = create_chunk_plan(job_id, probe.expected_size, online_nodes, assembler.id)
+            DB.create_chunks(chunks)
+            worker_ids = list({c.node_id for c in chunks if c.node_id})
+
+            job = JobRecord(
+                id=job_id,
+                requested_url=url,
+                resolved_url=probe.final_url,
+                filename=probe.filename,
+                content_type=probe.content_type,
+                expected_size=probe.expected_size,
+                status=JobStatus.ASSIGNED,
+                mode="BURST",
+                node_id=assembler.id,
+                assembler_node=assembler.id,
+                chunks_total=len(chunks),
+                chunks_completed=0,
+                transfer_path="DIRECT",
+                fleet_speed_bps=0.0,
+                worker_nodes=worker_ids,
+                replicas=1,
+                selection_reason=f"{mode_reason} (Assembler: {assembler.name})",
+                created_at=time.time(),
+                telegram_chat_id=telegram_chat_id,
+                telegram_message_id=telegram_message_id,
+            )
+            DB.create_job(job)
+            DB.log_audit("controller", "burst_job_created", job.id, "success", f"Assembler: {assembler.name}, Chunks: {len(chunks)}")
+            return job, None
+
+    if resolved_mode == "MIRROR":
+        selected_node, reason = select_best_node(nodes=raw_nodes, expected_size=probe.expected_size, preferred_node=preferred_node)
+        if not selected_node:
+            return None, f"Scheduling failed: {reason}"
+
+        mirror_workers = [n.id for n in online_nodes[:max(1, min(len(online_nodes), replicas))]]
+        job = JobRecord(
+            id=job_id,
+            requested_url=url,
+            resolved_url=probe.final_url,
+            filename=probe.filename,
+            content_type=probe.content_type,
+            expected_size=probe.expected_size,
+            status=JobStatus.ASSIGNED,
+            mode="MIRROR",
+            node_id=selected_node["id"],
+            worker_nodes=mirror_workers,
+            replicas=replicas,
+            selection_reason=f"Mirror mode across {len(mirror_workers)} replicas: {reason}",
+            created_at=time.time(),
+            telegram_chat_id=telegram_chat_id,
+            telegram_message_id=telegram_message_id,
+        )
+        DB.create_job(job)
+        DB.log_audit("controller", "mirror_job_created", job.id, "success", f"Replicas: {replicas}")
+        return job, None
+
+    # Default SINGLE node scheduling
+    selected_node, reason = select_best_node(nodes=raw_nodes, expected_size=probe.expected_size, preferred_node=preferred_node)
     if not selected_node:
         return None, f"Scheduling failed: {reason}"
 
-    # 3. Create Job Record
-    job_id = f"job_{secrets.token_hex(6)}"
     job = JobRecord(
         id=job_id,
         requested_url=url,
@@ -316,13 +441,13 @@ def controller_create_job_internal(
         content_type=probe.content_type,
         expected_size=probe.expected_size,
         status=JobStatus.ASSIGNED,
+        mode="SINGLE",
         node_id=selected_node["id"],
-        selection_reason=reason,
+        selection_reason=f"{mode_reason}: {reason}",
         created_at=time.time(),
         telegram_chat_id=telegram_chat_id,
         telegram_message_id=telegram_message_id,
     )
-
     DB.create_job(job)
     DB.log_audit("controller", "job_created", job.id, "success", f"Assigned to {selected_node['name']}: {reason}")
     return job, None
@@ -551,6 +676,8 @@ async def agent_job_complete(
 async def create_download_job(req: JobCreateRequest, user: Dict[str, Any] = Depends(require_auth)):
     job, err = controller_create_job_internal(
         url=req.url,
+        mode=req.mode,
+        replicas=getattr(req, "replicas", 2),
         preferred_node=req.preferred_node,
         telegram_chat_id=req.telegram_chat_id,
         telegram_message_id=req.telegram_message_id,
@@ -689,6 +816,368 @@ async def revoke_node(node_id: str, user: Dict[str, Any] = Depends(require_auth)
     DB.set_node_status(node_id, NodeStatus.REVOKED)
     DB.log_audit("user", "node_revoked", node["name"], "success")
     return {"ok": True}
+
+
+@app.post("/api/v1/nodes/{node_id}/drain")
+async def drain_node_endpoint(node_id: str, drained: bool = Query(True), user: Dict[str, Any] = Depends(require_auth)):
+    node = DB.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    DB.drain_node(node_id, drained=drained)
+    if drained:
+        reassigned = DB.reassign_node_chunks_on_loss(node_id)
+        DB.log_audit("user", "node_drained", node["name"], "success", f"Reassigned {reassigned} in-flight chunks")
+    else:
+        DB.log_audit("user", "node_undrained", node["name"], "success")
+    return {"ok": True, "node_id": node_id, "is_drained": drained}
+
+
+@app.delete("/api/v1/nodes/{node_id}")
+async def remove_node_endpoint(node_id: str, force: bool = Query(False), user: Dict[str, Any] = Depends(require_auth)):
+    node = DB.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    ok, reason = DB.remove_node_safely(node_id, force=force)
+    if not ok:
+        raise HTTPException(status_code=400, detail=f"Cannot safely remove node: {reason}")
+    DB.log_audit("user", "node_removed", node["name"], "success", f"Force: {force}")
+    return {"ok": True, "message": reason}
+
+
+# --- Phase 2: Chunk Management APIs ---
+@app.get("/api/v1/jobs/{job_id}/chunks")
+async def list_job_chunks_endpoint(job_id: str, user: Dict[str, Any] = Depends(require_auth)):
+    job = DB.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    chunks = DB.get_chunks_for_job(job_id)
+    return {"ok": True, "job_id": job_id, "chunks": chunks}
+
+
+@app.get("/api/v1/jobs/{job_id}/workers")
+async def list_job_workers_endpoint(job_id: str, user: Dict[str, Any] = Depends(require_auth)):
+    job = DB.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    chunks = DB.get_chunks_for_job(job_id)
+    worker_stats: Dict[str, Dict[str, Any]] = {}
+    for c in chunks:
+        nid = c.get("node_id") or "unassigned"
+        if nid not in worker_stats:
+            worker_stats[nid] = {
+                "node_id": nid,
+                "chunks_assigned": 0,
+                "chunks_completed": 0,
+                "total_bytes": 0,
+                "current_speed_bps": 0.0,
+            }
+        worker_stats[nid]["chunks_assigned"] += 1
+        if c.get("status") in ("COMPLETE", "VERIFIED"):
+            worker_stats[nid]["chunks_completed"] += 1
+            worker_stats[nid]["total_bytes"] += c.get("downloaded_bytes", 0)
+        worker_stats[nid]["current_speed_bps"] += c.get("current_speed_bps", 0.0)
+    return {"ok": True, "workers": list(worker_stats.values())}
+
+
+@app.post("/api/v1/agent/chunks/poll")
+async def agent_poll_chunks(node: Dict[str, Any] = Depends(verify_node_credentials)):
+    if DB.is_node_drained(node["id"]):
+        return {"ok": True, "chunk": None, "message": "Node is drained"}
+
+    with DB.connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM chunks WHERE node_id = ? AND status IN ('ASSIGNED', 'REQUEUED') ORDER BY chunk_index ASC LIMIT 1",
+            (node["id"],)
+        ).fetchone()
+
+    chunk_row = dict(row) if row else None
+
+    # Work-stealing queue: check PENDING chunks
+    if not chunk_row:
+        pending = DB.get_pending_chunks(limit=1)
+        if pending:
+            p_chunk = pending[0]
+            DB.assign_chunk(p_chunk["id"], node["id"])
+            chunk_row = DB.get_chunk(p_chunk["id"])
+
+    if not chunk_row:
+        return {"ok": True, "chunk": None}
+
+    job = DB.get_job(chunk_row["job_id"])
+    if not job or job.status in (JobStatus.CANCELLED, JobStatus.FAILED):
+        DB.fail_or_requeue_chunk(chunk_row["id"], error="Parent job cancelled")
+        return {"ok": True, "chunk": None}
+
+    DB.update_chunk_progress(chunk_row["id"], downloaded_bytes=0, speed=0.0)
+    return {
+        "ok": True,
+        "chunk": chunk_row,
+        "job": {
+            "id": job.id,
+            "url": job.requested_url,
+            "resolved_url": job.resolved_url or job.requested_url,
+            "filename": job.filename,
+            "assembler_node": job.assembler_node or job.node_id,
+        },
+    }
+
+
+@app.post("/api/v1/agent/chunks/{chunk_id}/progress")
+async def agent_chunk_progress(
+    chunk_id: str,
+    payload: ChunkProgressPayload,
+    node: Dict[str, Any] = Depends(verify_node_credentials)
+):
+    chunk = DB.get_chunk(chunk_id)
+    if not chunk:
+        raise HTTPException(status_code=404, detail="Chunk not found")
+
+    DB.update_chunk_progress(
+        chunk_id=chunk_id,
+        downloaded_bytes=payload.downloaded_bytes,
+        speed=payload.current_speed_bps,
+        eta=payload.eta_seconds,
+    )
+
+    job_id = chunk["job_id"]
+    job = DB.get_job(job_id)
+    if job and job.mode == "BURST":
+        all_chunks = DB.get_chunks_for_job(job_id)
+        total_dl = sum(c["downloaded_bytes"] for c in all_chunks)
+        tot_speed = sum(c["current_speed_bps"] for c in all_chunks)
+        chunks_done = sum(1 for c in all_chunks if c["status"] in ("COMPLETE", "VERIFIED"))
+
+        DB.update_job_progress(
+            job_id=job_id,
+            downloaded_bytes=total_dl,
+            total_bytes=job.expected_size,
+            speed=tot_speed,
+            eta=payload.eta_seconds,
+        )
+        with DB.connection() as conn:
+            conn.execute(
+                "UPDATE jobs SET fleet_speed_bps = ?, chunks_completed = ? WHERE id = ?",
+                (tot_speed, chunks_done, job_id)
+            )
+            conn.commit()
+
+        if TELEGRAM_BOT and job.telegram_chat_id and job.telegram_message_id:
+            TELEGRAM_BOT.update_progress(
+                job_id=job.id,
+                chat_id=job.telegram_chat_id,
+                message_id=job.telegram_message_id,
+                filename=job.filename,
+                downloaded=total_dl,
+                total=job.expected_size,
+                speed_bps=tot_speed,
+                eta_sec=payload.eta_seconds,
+                node_name=f"Fleet ({len(job.worker_nodes or [])} nodes)",
+            )
+
+    return {"ok": True}
+
+
+@app.post("/api/v1/agent/chunks/{chunk_id}/complete")
+async def agent_chunk_complete(
+    chunk_id: str,
+    payload: ChunkCompletePayload,
+    request: Request,
+    node: Dict[str, Any] = Depends(verify_node_credentials)
+):
+    chunk = DB.get_chunk(chunk_id)
+    if not chunk:
+        raise HTTPException(status_code=404, detail="Chunk not found")
+
+    DB.complete_chunk(
+        chunk_id=chunk_id,
+        sha256=payload.sha256,
+        duration_seconds=payload.duration_seconds,
+    )
+
+    job_id = chunk["job_id"]
+    job = DB.get_job(job_id)
+    if not job:
+        return {"ok": True, "job_complete": False}
+
+    all_chunks = DB.get_chunks_for_job(job_id)
+    all_done = all(c["status"] in ("COMPLETE", "VERIFIED") for c in all_chunks)
+
+    if all_done and job.status != JobStatus.COMPLETED:
+        dest_filename = job.filename or f"transfer_{job.id}.bin"
+        assembler = BurstAssembler(job_id=job.id, total_size=job.expected_size, dest_dir=DOWNLOAD_DIR, filename=dest_filename)
+
+        # Assemble from local paths or relay directory
+        for c in sorted(all_chunks, key=lambda x: x["start_byte"]):
+            part_file = RELAY_DIR / f"{c['id']}.part"
+            local_src = Path(c.get("local_path", "")) if c.get("local_path") else None
+            if local_src and local_src.exists():
+                assembler.write_chunk_from_file(c["id"], c["start_byte"], local_src)
+            elif part_file.exists():
+                assembler.write_chunk_from_file(c["id"], c["start_byte"], part_file)
+                part_file.unlink(missing_ok=True)
+
+        final_path, final_sha256 = assembler.finalize()
+
+        # Ingest into CyberStore
+        STORE.store_file(final_path, filename=dest_filename, primary_node_id=node["id"])
+
+        # Mark job complete
+        DB.complete_job(job_id=job.id, sha256=final_sha256, size=job.expected_size, path=str(final_path))
+
+        # Cybershare link
+        token = generate_signed_token(job_id=job.id, secret_key=CONTROLLER_SECRET, ttl_seconds=86400)
+        expires_at = time.time() + 86400
+        DB.create_signed_link(
+            token=token,
+            job_id=job.id,
+            file_path=str(final_path),
+            filename=dest_filename,
+            file_size=job.expected_size,
+            expires_at=expires_at,
+        )
+        DB.update_job_signed_link(job.id, token, expires_at)
+
+        host = request.headers.get("host") or "localhost:8000"
+        scheme = "https" if request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https" else "http"
+        direct_link_url = f"{scheme}://{host}/f/{token}"
+
+        if TELEGRAM_BOT and job.telegram_chat_id:
+            TELEGRAM_BOT.notify_completion(
+                job_id=job.id,
+                chat_id=job.telegram_chat_id,
+                message_id=job.telegram_message_id,
+                filename=dest_filename,
+                file_path=str(final_path),
+                file_size=job.expected_size,
+                sha256=final_sha256,
+                direct_link=direct_link_url,
+                node_name=f"BURST Fleet ({len(all_chunks)} chunks)",
+            )
+            DB.update_job_telegram_delivery(job.id, True)
+
+        return {"ok": True, "job_complete": True, "direct_link": direct_link_url}
+
+    return {"ok": True, "job_complete": False}
+
+
+@app.post("/api/v1/agent/chunks/{chunk_id}/fail")
+async def agent_chunk_fail(
+    chunk_id: str,
+    payload: ChunkFailPayload,
+    node: Dict[str, Any] = Depends(verify_node_credentials)
+):
+    chunk = DB.get_chunk(chunk_id)
+    if not chunk:
+        raise HTTPException(status_code=404, detail="Chunk not found")
+    requeued = DB.fail_or_requeue_chunk(chunk_id, error=payload.error)
+    return {"ok": True, "requeued": requeued}
+
+
+# --- Phase 2: Inter-Node Tickets & Relay APIs ---
+@app.post("/api/v1/tickets/create")
+async def create_ticket_endpoint(payload: TicketRequestPayload, node: Dict[str, Any] = Depends(verify_node_credentials)):
+    ticket = generate_transfer_ticket(
+        signing_secret=CONTROLLER_SECRET,
+        job_id=payload.job_id,
+        chunk_id=payload.chunk_id,
+        source_node=node["id"],
+        destination_node=payload.destination_node,
+        ttl_seconds=payload.ttl_seconds,
+    )
+    DB.create_transfer_ticket(ticket)
+    return {"ok": True, "ticket": ticket.model_dump()}
+
+
+@app.post("/api/v1/relay/chunks/{chunk_id}")
+async def relay_upload_chunk(
+    chunk_id: str,
+    request: Request,
+    node: Dict[str, Any] = Depends(verify_node_credentials)
+):
+    chunk = DB.get_chunk(chunk_id)
+    if not chunk:
+        raise HTTPException(status_code=404, detail="Chunk not found")
+
+    relay_path = RELAY_DIR / f"{chunk_id}.part"
+    hasher = hashlib.sha256()
+    size = 0
+    with open(relay_path, "wb") as f:
+        async for chunk_bytes in request.stream():
+            f.write(chunk_bytes)
+            hasher.update(chunk_bytes)
+            size += len(chunk_bytes)
+
+    calc_sha = hasher.hexdigest()
+    return {"ok": True, "chunk_id": chunk_id, "size_bytes": size, "sha256": calc_sha}
+
+
+@app.get("/api/v1/relay/chunks/{chunk_id}")
+async def relay_download_chunk(
+    chunk_id: str,
+    ticket_sig: Optional[str] = Query(None),
+    node: Dict[str, Any] = Depends(verify_node_credentials)
+):
+    chunk = DB.get_chunk(chunk_id)
+    if not chunk:
+        raise HTTPException(status_code=404, detail="Chunk not found")
+
+    relay_path = RELAY_DIR / f"{chunk_id}.part"
+    if not relay_path.exists():
+        raise HTTPException(status_code=404, detail="Relayed chunk file not found")
+
+    def stream_file():
+        with open(relay_path, "rb") as f:
+            while True:
+                buf = f.read(64 * 1024)
+                if not buf:
+                    break
+                yield buf
+
+    return StreamingResponse(
+        stream_file(),
+        media_type="application/octet-stream",
+        headers={"Content-Length": str(relay_path.stat().st_size)}
+    )
+
+
+# --- Phase 2: CyberStore Storage APIs ---
+@app.get("/api/v1/store/summary")
+async def get_cyberstore_summary(user: Dict[str, Any] = Depends(require_auth)):
+    summary = DB.get_cyberstore_summary()
+    return {"ok": True, "summary": summary}
+
+
+@app.get("/api/v1/store/files")
+async def list_stored_files_endpoint(limit: int = 50, user: Dict[str, Any] = Depends(require_auth)):
+    files = DB.list_stored_files(limit=limit)
+    return {"ok": True, "files": [f.model_dump() for f in files]}
+
+
+@app.get("/api/v1/store/files/{file_id}")
+async def get_stored_file_endpoint(file_id: str, user: Dict[str, Any] = Depends(require_auth)):
+    file_record = DB.get_stored_file(file_id)
+    if not file_record:
+        raise HTTPException(status_code=404, detail="Stored file not found")
+    return {"ok": True, "file": file_record.model_dump()}
+
+
+@app.post("/api/v1/store/rebalance")
+async def rebalance_store_endpoint(user: Dict[str, Any] = Depends(require_auth)):
+    active_nodes = [NodeRecord(**n) for n in DB.list_nodes() if n["status"] == "ONLINE" and not n.get("is_drained")]
+    repaired = STORE.rebalance_replicas(active_nodes=active_nodes)
+    return {"ok": True, "repaired_count": repaired}
+
+
+@app.post("/api/v1/store/gc")
+async def gc_store_endpoint(dry_run: bool = Query(True), user: Dict[str, Any] = Depends(require_auth)):
+    reclaimed_bytes, deleted_count, unreferenced = STORE.garbage_collect(dry_run=dry_run)
+    return {
+        "ok": True,
+        "dry_run": dry_run,
+        "reclaimed_bytes": reclaimed_bytes,
+        "deleted_count": deleted_count,
+        "unreferenced_hashes": unreferenced,
+    }
 
 
 # --- WebSocket Realtime Stream ---

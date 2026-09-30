@@ -10,10 +10,12 @@ from pathlib import Path
 import re
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 import urllib.error
 import urllib.parse
 import urllib.request
+
+from fleet.models import JobMode
 
 
 def get_telegram_config() -> Tuple[str, List[int]]:
@@ -238,10 +240,20 @@ class TelegramTransferBot:
 
         # 4. /download <url> or direct URL pasted
         url_candidate = ""
+        mode_val = "AUTO"
         if text.startswith("/download"):
-            parts = text.split(maxsplit=1)
-            if len(parts) > 1:
-                url_candidate = parts[1].strip()
+            tokens = text.split()
+            for t in tokens[1:]:
+                if t.lower() in ("--burst", "-b"):
+                    mode_val = "BURST"
+                elif t.lower() in ("--mirror", "-m"):
+                    mode_val = "MIRROR"
+                elif t.lower() in ("--single", "-s"):
+                    mode_val = "SINGLE"
+                elif t.startswith("http://") or t.startswith("https://"):
+                    url_candidate = t
+                elif not url_candidate and not t.startswith("-"):
+                    url_candidate = t
         elif text.startswith("http://") or text.startswith("https://"):
             url_candidate = text.split()[0]
 
@@ -258,8 +270,10 @@ class TelegramTransferBot:
             msg_id = initial_resp.get("result", {}).get("message_id")
             
             # Submit job to controller
+            job_mode = JobMode(mode_val) if mode_val in JobMode.__members__ or mode_val in [m.value for m in JobMode] else JobMode.AUTO
             job, err = self.controller.submit_job(
                 url=url_candidate,
+                mode=job_mode,
                 telegram_chat_id=chat_id,
                 telegram_message_id=msg_id,
             )
@@ -277,6 +291,12 @@ class TelegramTransferBot:
                 )
             else:
                 size_str = f"{job.expected_size // (1024**2)} MB" if job.expected_size > 0 else "Unknown size"
+                burst_details = ""
+                if job.mode == "BURST":
+                    burst_details = f"\n<b>Mode:</b> ⚡ BURST ({job.chunks_total} chunks)\n<b>Assembler:</b> <code>{job.assembler_node or job.node_id}</code>"
+                elif job.mode == "MIRROR":
+                    burst_details = f"\n<b>Mode:</b> 🪞 MIRROR ({job.replicas} replicas)"
+
                 call_telegram_api(
                     self.token,
                     "editMessageText",
@@ -287,7 +307,7 @@ class TelegramTransferBot:
                             f"⚡ <b>CYBERVPS TRANSFER INTAKE</b>\n\n"
                             f"<b>File:</b> <code>{job.filename}</code>\n"
                             f"<b>Size:</b> {size_str}\n"
-                            f"<b>Assigned Node:</b> <code>{job.node_id}</code>\n"
+                            f"<b>Assigned Node:</b> <code>{job.node_id}</code>{burst_details}\n"
                             f"<b>Status:</b> Initializing download..."
                         ),
                         "parse_mode": "HTML",
@@ -321,7 +341,7 @@ class TelegramTransferBot:
             f"<code>[{bar}] {pct:.1f}%</code>\n\n"
             f"<b>Downloaded:</b> {dl_mb:.1f} / {tot_mb:.1f} MB\n"
             f"<b>Speed:</b> {speed_mb:.1f} MiB/s | <b>ETA:</b> {eta_sec}s\n"
-            f"<b>Node:</b> <code>{node_name}</code>"
+            f"<b>Workers:</b> <code>{node_name}</code>"
         )
 
         call_telegram_api(

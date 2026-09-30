@@ -62,6 +62,9 @@ handle_fleet_submenu() {
         echo -e "  ${C_BWHITE}[8]${C_RESET} Run Live Network Benchmark"
         echo -e "  ${C_BWHITE}[9]${C_RESET} Run Fleet Doctor"
         echo -e "  ${C_BWHITE}[10]${C_RESET} View Fleet Audit Logs"
+        echo -e "  ${C_BWHITE}[11]${C_RESET} Drain Node (Maintenance Mode)"
+        echo -e "  ${C_BWHITE}[12]${C_RESET} Un-drain Node (Restore Active)"
+        echo -e "  ${C_BWHITE}[13]${C_RESET} Safely Remove Node"
         echo -e "  ${C_BWHITE}[0]${C_RESET} Return to Main Menu"
         echo
         local choice=""
@@ -118,6 +121,35 @@ handle_fleet_submenu() {
                 ;;
             10)
                 cybervps_fleet_cli logs
+                ui_pause
+                ;;
+            11)
+                local ntarget=""
+                read -rp "Enter Node ID or Name to Drain: " ntarget
+                if [ -n "$ntarget" ]; then
+                    cybervps_fleet_cli drain "$ntarget"
+                fi
+                ui_pause
+                ;;
+            12)
+                local ntarget=""
+                read -rp "Enter Node ID or Name to Un-drain: " ntarget
+                if [ -n "$ntarget" ]; then
+                    cybervps_fleet_cli drain "$ntarget" --undrain
+                fi
+                ui_pause
+                ;;
+            13)
+                local ntarget="" nforce=""
+                read -rp "Enter Node ID or Name to Remove: " ntarget
+                read -rp "Force removal? [y/N]: " nforce
+                if [ -n "$ntarget" ]; then
+                    if [[ "$nforce" =~ ^[yY] ]]; then
+                        cybervps_fleet_cli rm "$ntarget" --force
+                    else
+                        cybervps_fleet_cli rm "$ntarget"
+                    fi
+                fi
                 ui_pause
                 ;;
             0|[qQ]*)

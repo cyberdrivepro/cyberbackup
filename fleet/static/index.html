@@ -14,7 +14,7 @@
     <div class="brand">
       <div class="logo-icon">⚡</div>
       <div class="brand-text">CYBERVPS <span style="color: var(--primary);">TRANSFER</span></div>
-      <div class="brand-badge">PHASE 1</div>
+      <div class="brand-badge">PHASE 2 • BURST + STORE</div>
     </div>
     <div class="header-status">
       <div class="connection-pill">
@@ -28,8 +28,8 @@
   <main>
     <!-- URL Intake Section -->
     <section class="intake-card">
-      <div class="intake-title">⚡ High-Speed Fleet Transfer Intake</div>
-      <form id="form-intake" class="intake-form" onsubmit="submitDownload(event)">
+      <div class="intake-title">⚡ High-Speed Fleet Transfer Intake (BURST & MIRROR Ready)</div>
+      <form id="form-intake" class="intake-form" onsubmit="submitDownload(event)" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
         <input 
           type="url" 
           id="input-url" 
@@ -37,7 +37,14 @@
           placeholder="Paste HTTPS or HTTP download URL (e.g. https://releases.ubuntu.com/24.04/ubuntu.iso)..." 
           required 
           autocomplete="off"
+          style="flex: 1; min-width: 280px;"
         />
+        <select id="select-mode" class="intake-select" style="background: var(--bg-card); border: 1px solid var(--border); color: #fff; padding: 0.5rem 0.75rem; border-radius: 6px; font-weight: 500; font-size: 0.85rem; cursor: pointer;">
+          <option value="AUTO" selected>AUTO (Smart Burst)</option>
+          <option value="BURST">BURST (Multi-Node)</option>
+          <option value="SINGLE">SINGLE (Direct VPS)</option>
+          <option value="MIRROR">MIRROR (Multi-Replica)</option>
+        </select>
         <button type="submit" id="btn-submit" class="btn-primary">DOWNLOAD</button>
       </form>
       <div id="intake-feedback" style="margin-top: 0.5rem; font-size: 0.8rem; display: none;"></div>
@@ -121,6 +128,55 @@
             <tr>
               <td colspan="6" style="text-align: center; color: var(--text-dim); padding: 2rem;">No transfers queued or completed yet.</td>
             </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- CyberStore Distributed Content-Addressed Storage Section -->
+    <section>
+      <div class="section-header">
+        <div class="section-title">🗄️ CyberStore Distributed Storage Engine</div>
+        <div style="display: flex; gap: 0.5rem;">
+          <button class="action-btn" onclick="triggerStoreGC(true)" title="Safe Dry-Run GC">GC (DRY-RUN)</button>
+          <button class="action-btn" onclick="triggerStoreRebalance()" title="Rebalance Replicas">REBALANCE</button>
+        </div>
+      </div>
+      <div class="overview-grid" style="margin-bottom: 1rem;">
+        <div class="metric-card">
+          <div class="metric-label">Stored Objects</div>
+          <div class="metric-value" id="store-stat-objects">0</div>
+          <div class="metric-sub">SHA-256 Content-Addressed</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Physical Disk Used</div>
+          <div class="metric-value" id="store-stat-physical">0 MB</div>
+          <div class="metric-sub" id="store-stat-logical">Logical: 0 MB</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Dedup Space Saved</div>
+          <div class="metric-value" id="store-stat-savings" style="color: #00ff88;">0.0%</div>
+          <div class="metric-sub">Zero-redundancy chunking</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Stored Files / Health</div>
+          <div class="metric-value" id="store-stat-files">0 files</div>
+          <div class="metric-sub" id="store-stat-health" style="color: var(--primary);">All replicas healthy</div>
+        </div>
+      </div>
+      <div class="transfers-container">
+        <table class="transfers-table">
+          <thead>
+            <tr>
+              <th>File ID / Name</th>
+              <th>Size</th>
+              <th>Chunks</th>
+              <th>Status</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+          <tbody id="store-files-body">
+            <tr><td colspan="5" style="text-align: center; color: var(--text-dim); padding: 1.5rem;">No files ingested into CyberStore yet.</td></tr>
           </tbody>
         </table>
       </div>

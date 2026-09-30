@@ -28,6 +28,25 @@ class JobStatus(str, Enum):
     CANCELLED = "CANCELLED"
     FAILED = "FAILED"
     NODE_LOST = "NODE_LOST"
+    SOURCE_CHANGED = "SOURCE_CHANGED"
+
+
+class JobMode(str, Enum):
+    AUTO = "AUTO"
+    SINGLE = "SINGLE"
+    BURST = "BURST"
+    MIRROR = "MIRROR"
+
+
+class ChunkStatus(str, Enum):
+    PENDING = "PENDING"
+    ASSIGNED = "ASSIGNED"
+    DOWNLOADING = "DOWNLOADING"
+    COMPLETE = "COMPLETE"
+    RETRYING = "RETRYING"
+    FAILED = "FAILED"
+    REQUEUED = "REQUEUED"
+    VERIFIED = "VERIFIED"
 
 
 class NodeEnrollRequest(BaseModel):
@@ -114,6 +133,8 @@ class NodeRecord(BaseModel):
     reliability_score: float = 100.0
     failure_count: int = 0
     success_count: int = 0
+    is_drained: bool = False
+    storage_used_bytes: int = 0
     
     capabilities: Dict[str, Any] = Field(default_factory=dict)
     region: Optional[str] = None
@@ -136,6 +157,8 @@ class ProbeResult(BaseModel):
 class JobCreateRequest(BaseModel):
     url: str
     filename: Optional[str] = None
+    mode: JobMode = JobMode.AUTO
+    replicas: int = 2
     telegram_chat_id: Optional[int] = None
     telegram_message_id: Optional[int] = None
     preferred_node: Optional[str] = None
@@ -155,7 +178,15 @@ class JobRecord(BaseModel):
     average_speed_bps: float = 0.0
     eta_seconds: int = 0
     status: JobStatus = JobStatus.QUEUED
+    mode: str = "SINGLE"
     node_id: Optional[str] = None
+    assembler_node: Optional[str] = None
+    chunks_total: int = 0
+    chunks_completed: int = 0
+    transfer_path: str = "DIRECT"
+    fleet_speed_bps: float = 0.0
+    worker_nodes: List[str] = Field(default_factory=list)
+    replicas: int = 1
     selection_reason: str = ""
     sha256: str = ""
     local_path: str = ""
@@ -170,6 +201,77 @@ class JobRecord(BaseModel):
     telegram_delivered: bool = False
     signed_link_token: str = ""
     signed_link_expires_at: float = 0.0
+
+
+class DownloadChunk(BaseModel):
+    chunk_id: str
+    job_id: str
+    chunk_index: int
+    start_byte: int
+    end_byte: int
+    expected_length: int
+    downloaded_bytes: int = 0
+    node_id: Optional[str] = None
+    status: ChunkStatus = ChunkStatus.PENDING
+    attempt_count: int = 0
+    checksum: str = ""
+    speed_bps: float = 0.0
+    created_at: float = Field(default_factory=time.time)
+    started_at: float = 0.0
+    completed_at: float = 0.0
+    local_path: str = ""
+
+    @property
+    def byte_length(self) -> int:
+        return self.expected_length
+
+
+class TransferTicket(BaseModel):
+    ticket_id: str
+    job_id: str
+    chunk_id: str
+    source_node: str
+    destination_node: str
+    expires_at: float
+    nonce: str
+    signature: str
+    used: bool = False
+
+
+class StorageObject(BaseModel):
+    object_hash: str
+    size_bytes: int
+    reference_count: int = 1
+    created_at: float = Field(default_factory=time.time)
+    last_accessed_at: float = Field(default_factory=time.time)
+    pinned: bool = False
+
+
+class StorageReplica(BaseModel):
+    object_hash: str
+    node_id: str
+    local_rel_path: str
+    size_bytes: int
+    is_healthy: bool = True
+    stored_at: float = Field(default_factory=time.time)
+
+
+class StoredFile(BaseModel):
+    file_id: str
+    filename: str
+    size_bytes: int
+    final_hash: str
+    replication_factor: int = 2
+    created_at: float = Field(default_factory=time.time)
+    status: str = "HEALTHY"
+
+
+class StoredFileChunk(BaseModel):
+    file_id: str
+    chunk_index: int
+    object_hash: str
+    start_byte: int
+    end_byte: int
 
 
 class JobProgressUpdate(BaseModel):
@@ -193,3 +295,4 @@ class BenchmarkReport(BaseModel):
     upload_mbps: float
     provider: str = "internal"
     duration_seconds: float = 5.0
+

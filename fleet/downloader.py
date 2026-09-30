@@ -262,3 +262,74 @@ class SmartDownloader:
         if match_s:
             total += int(match_s.group(1))
         return total
+
+
+def download_byte_range(
+    url: str,
+    dest_path: Path,
+    start_byte: int,
+    end_byte: int,
+    expected_etag: str = "",
+    progress_callback: Optional[Callable[[int, int, float], None]] = None,
+    cancel_event: Optional[threading.Event] = None,
+    timeout: float = 60.0,
+) -> Tuple[bool, str, int, float, Optional[str]]:
+    """
+    Downloads a specific byte range [start_byte, end_byte] with streaming SHA-256 computation.
+    Validates ETag/Last-Modified stability if supplied.
+    Returns: (success, sha256_checksum, bytes_downloaded, elapsed_seconds, error)
+    """
+    dest_path = Path(dest_path)
+    dest_path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+
+    headers = {
+        "User-Agent": "CyberVPS-FleetTransfer/2.0",
+        "Range": f"bytes={start_byte}-{end_byte}",
+    }
+    expected_len = end_byte - start_byte + 1
+    hasher = hashlib.sha256()
+    downloaded = 0
+    start_time = time.time()
+    last_cb = 0.0
+
+    try:
+        import httpx
+        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+            with client.stream("GET", url, headers=headers) as resp:
+                if resp.status_code not in (200, 206):
+                    elapsed = max(0.001, time.time() - start_time)
+                    return False, "", 0, elapsed, f"HTTP {resp.status_code} returned for range {start_byte}-{end_byte}"
+
+                # Check ETag stability
+                current_etag = resp.headers.get("etag", "").strip('"\'')
+                if expected_etag and current_etag and current_etag != expected_etag:
+                    elapsed = max(0.001, time.time() - start_time)
+                    return False, "", 0, elapsed, f"SOURCE_CHANGED: ETag mismatch ({current_etag} != {expected_etag})"
+
+                temp_path = dest_path.with_suffix(dest_path.suffix + ".part")
+                with open(temp_path, "wb") as f:
+                    for chunk in resp.iter_bytes(chunk_size=65536):
+                        if cancel_event and cancel_event.is_set():
+                            elapsed = max(0.001, time.time() - start_time)
+                            return False, "", downloaded, elapsed, "Cancelled by user"
+                        if chunk:
+                            f.write(chunk)
+                            hasher.update(chunk)
+                            downloaded += len(chunk)
+                            now = time.time()
+                            if progress_callback and (now - last_cb >= 0.5 or downloaded >= expected_len):
+                                last_cb = now
+                                elapsed_cb = max(0.001, now - start_time)
+                                speed = (downloaded * 8.0) / elapsed_cb
+                                progress_callback(downloaded, expected_len, speed)
+
+                if temp_path.exists():
+                    if dest_path.exists():
+                        dest_path.unlink()
+                    temp_path.rename(dest_path)
+
+                elapsed = max(0.001, time.time() - start_time)
+                return True, hasher.hexdigest(), downloaded, elapsed, None
+    except Exception as e:
+        elapsed = max(0.001, time.time() - start_time)
+        return False, "", downloaded, elapsed, str(e)

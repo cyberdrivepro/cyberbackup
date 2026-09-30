@@ -9,7 +9,11 @@ from pathlib import Path
 import sqlite3
 import time
 from typing import Any, Dict, List, Optional
-from fleet.models import JobRecord, JobStatus, NodeRecord, NodeStatus
+from fleet.models import (
+    JobRecord, JobStatus, JobMode, NodeRecord, NodeStatus,
+    DownloadChunk, ChunkStatus, TransferTicket,
+    StorageObject, StorageReplica, StoredFile, StoredFileChunk,
+)
 
 
 def get_default_db_path() -> Path:
@@ -153,11 +157,122 @@ class FleetDatabase:
                 detail TEXT NOT NULL DEFAULT ''
             );
 
+            CREATE TABLE IF NOT EXISTS chunks (
+                chunk_id TEXT PRIMARY KEY,
+                job_id TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                start_byte INTEGER NOT NULL,
+                end_byte INTEGER NOT NULL,
+                expected_length INTEGER NOT NULL,
+                downloaded_bytes INTEGER NOT NULL DEFAULT 0,
+                node_id TEXT,
+                status TEXT NOT NULL DEFAULT 'PENDING',
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                checksum TEXT NOT NULL DEFAULT '',
+                speed_bps REAL NOT NULL DEFAULT 0.0,
+                created_at REAL NOT NULL,
+                started_at REAL NOT NULL DEFAULT 0.0,
+                completed_at REAL NOT NULL DEFAULT 0.0,
+                local_path TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS transfer_tickets (
+                ticket_id TEXT PRIMARY KEY,
+                job_id TEXT NOT NULL,
+                chunk_id TEXT NOT NULL,
+                source_node TEXT NOT NULL,
+                destination_node TEXT NOT NULL,
+                expires_at REAL NOT NULL,
+                nonce TEXT NOT NULL,
+                signature TEXT NOT NULL,
+                used INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS storage_objects (
+                object_hash TEXT PRIMARY KEY,
+                size_bytes INTEGER NOT NULL,
+                reference_count INTEGER NOT NULL DEFAULT 1,
+                created_at REAL NOT NULL,
+                last_accessed_at REAL NOT NULL,
+                pinned INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS storage_replicas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                object_hash TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                local_rel_path TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                is_healthy INTEGER NOT NULL DEFAULT 1,
+                stored_at REAL NOT NULL,
+                UNIQUE(object_hash, node_id),
+                FOREIGN KEY (object_hash) REFERENCES storage_objects(object_hash) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS stored_files (
+                file_id TEXT PRIMARY KEY,
+                filename TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                final_hash TEXT NOT NULL,
+                replication_factor INTEGER NOT NULL DEFAULT 2,
+                created_at REAL NOT NULL,
+                status TEXT NOT NULL DEFAULT 'HEALTHY'
+            );
+
+            CREATE TABLE IF NOT EXISTS stored_file_chunks (
+                file_id TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                object_hash TEXT NOT NULL,
+                start_byte INTEGER NOT NULL,
+                end_byte INTEGER NOT NULL,
+                PRIMARY KEY (file_id, chunk_index),
+                FOREIGN KEY (file_id) REFERENCES stored_files(file_id) ON DELETE CASCADE,
+                FOREIGN KEY (object_hash) REFERENCES storage_objects(object_hash)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_nodes_status ON nodes(status);
             CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
             CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
             CREATE INDEX IF NOT EXISTS idx_signed_links_expires ON signed_links(expires_at);
+            CREATE INDEX IF NOT EXISTS idx_chunks_job ON chunks(job_id);
+            CREATE INDEX IF NOT EXISTS idx_chunks_status ON chunks(status);
+            CREATE INDEX IF NOT EXISTS idx_chunks_node ON chunks(node_id);
+            CREATE INDEX IF NOT EXISTS idx_storage_replicas_node ON storage_replicas(node_id);
+            CREATE INDEX IF NOT EXISTS idx_storage_replicas_hash ON storage_replicas(object_hash);
             """)
+
+            # Column migrations for existing databases
+            job_cols = {
+                "mode": "TEXT NOT NULL DEFAULT 'SINGLE'",
+                "assembler_node": "TEXT",
+                "chunks_total": "INTEGER NOT NULL DEFAULT 0",
+                "chunks_completed": "INTEGER NOT NULL DEFAULT 0",
+                "transfer_path": "TEXT NOT NULL DEFAULT 'DIRECT'",
+                "fleet_speed_bps": "REAL NOT NULL DEFAULT 0.0",
+                "worker_nodes_json": "TEXT NOT NULL DEFAULT '[]'",
+                "replicas": "INTEGER NOT NULL DEFAULT 1",
+            }
+            existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+            for col, col_def in job_cols.items():
+                if col not in existing_cols:
+                    try:
+                        conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {col_def}")
+                    except Exception:
+                        pass
+
+            node_cols = {
+                "is_drained": "INTEGER NOT NULL DEFAULT 0",
+                "storage_used_bytes": "INTEGER NOT NULL DEFAULT 0",
+            }
+            existing_node_cols = {row[1] for row in conn.execute("PRAGMA table_info(nodes)").fetchall()}
+            for col, col_def in node_cols.items():
+                if col not in existing_node_cols:
+                    try:
+                        conn.execute(f"ALTER TABLE nodes ADD COLUMN {col} {col_def}")
+                    except Exception:
+                        pass
+            conn.commit()
 
     # --- Setting Operations ---
     def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
@@ -354,6 +469,18 @@ class FleetDatabase:
             )
             conn.commit()
 
+    @staticmethod
+    def _row_to_job(row) -> JobRecord:
+        d = dict(row)
+        if "worker_nodes_json" in d:
+            try:
+                d["worker_nodes"] = json.loads(d.pop("worker_nodes_json") or "[]")
+            except Exception:
+                d["worker_nodes"] = []
+        elif "worker_nodes" not in d:
+            d["worker_nodes"] = []
+        return JobRecord(**d)
+
     # --- Job Operations ---
     def create_job(self, job: JobRecord):
         with self.connection() as conn:
@@ -362,17 +489,22 @@ class FleetDatabase:
                 INSERT INTO jobs (
                     id, requested_url, resolved_url, filename, content_type,
                     expected_size, downloaded_bytes, progress_percent, current_speed_bps,
-                    peak_speed_bps, average_speed_bps, eta_seconds, status, node_id,
+                    peak_speed_bps, average_speed_bps, eta_seconds, status, mode, node_id,
+                    assembler_node, chunks_total, chunks_completed, transfer_path,
+                    fleet_speed_bps, worker_nodes_json, replicas,
                     selection_reason, sha256, local_path, created_at, started_at,
                     completed_at, retry_count, max_retries, failure_reason,
                     telegram_chat_id, telegram_message_id, telegram_delivered,
                     signed_link_token, signed_link_expires_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job.id, job.requested_url, job.resolved_url, job.filename, job.content_type,
                     job.expected_size, job.downloaded_bytes, job.progress_percent, job.current_speed_bps,
-                    job.peak_speed_bps, job.average_speed_bps, job.eta_seconds, job.status.value, job.node_id,
+                    job.peak_speed_bps, job.average_speed_bps, job.eta_seconds,
+                    job.status.value if hasattr(job.status, "value") else str(job.status),
+                    job.mode, job.node_id, job.assembler_node, job.chunks_total, job.chunks_completed,
+                    job.transfer_path, job.fleet_speed_bps, json.dumps(job.worker_nodes), job.replicas,
                     job.selection_reason, job.sha256, job.local_path, job.created_at, job.started_at,
                     job.completed_at, job.retry_count, job.max_retries, job.failure_reason,
                     job.telegram_chat_id, job.telegram_message_id, 1 if job.telegram_delivered else 0,
@@ -386,7 +518,7 @@ class FleetDatabase:
             row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
             if not row:
                 return None
-            return JobRecord(**dict(row))
+            return self._row_to_job(row)
 
     def list_jobs(self, status: Optional[str] = None, limit: int = 50) -> List[JobRecord]:
         with self.connection() as conn:
@@ -399,7 +531,7 @@ class FleetDatabase:
                 rows = conn.execute(
                     "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)
                 ).fetchall()
-            return [JobRecord(**dict(r)) for r in rows]
+            return [self._row_to_job(r) for r in rows]
 
     def update_job_progress(self, job_id: str, downloaded_bytes: int, total_bytes: int, speed: float, eta: int):
         with self.connection() as conn:
@@ -525,3 +657,452 @@ class FleetDatabase:
         with self.connection() as conn:
             rows = conn.execute("SELECT * FROM audit_log ORDER BY timestamp DESC LIMIT ?", (limit,)).fetchall()
             return [dict(r) for r in rows]
+
+    # --- Chunk Operations (Phase 2 BURST) ---
+    def create_chunks(self, chunks: List[DownloadChunk]):
+        with self.connection() as conn:
+            for c in chunks:
+                conn.execute(
+                    """
+                    INSERT INTO chunks (
+                        chunk_id, job_id, chunk_index, start_byte, end_byte,
+                        expected_length, downloaded_bytes, node_id, status,
+                        attempt_count, checksum, speed_bps, created_at,
+                        started_at, completed_at, local_path
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(chunk_id) DO UPDATE SET
+                        status = excluded.status,
+                        node_id = excluded.node_id
+                    """,
+                    (
+                        c.chunk_id, c.job_id, c.chunk_index, c.start_byte, c.end_byte,
+                        c.expected_length, c.downloaded_bytes, c.node_id,
+                        c.status.value if hasattr(c.status, "value") else str(c.status),
+                        c.attempt_count, c.checksum, c.speed_bps, c.created_at,
+                        c.started_at, c.completed_at, c.local_path
+                    )
+                )
+            conn.commit()
+
+    def get_chunks_for_job(self, job_id: str) -> List[DownloadChunk]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM chunks WHERE job_id = ? ORDER BY chunk_index ASC",
+                (job_id,)
+            ).fetchall()
+            return [DownloadChunk(**dict(r)) for r in rows]
+
+    def get_chunk(self, chunk_id: str) -> Optional[DownloadChunk]:
+        with self.connection() as conn:
+            row = conn.execute("SELECT * FROM chunks WHERE chunk_id = ?", (chunk_id,)).fetchone()
+            return DownloadChunk(**dict(row)) if row else None
+
+    def get_pending_chunks(self, job_id: str) -> List[DownloadChunk]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM chunks WHERE job_id = ? AND status IN ('PENDING', 'REQUEUED') ORDER BY chunk_index ASC",
+                (job_id,)
+            ).fetchall()
+            return [DownloadChunk(**dict(r)) for r in rows]
+
+    def assign_chunk(self, chunk_id: str, node_id: str):
+        with self.connection() as conn:
+            now = time.time()
+            conn.execute(
+                """
+                UPDATE chunks SET
+                    status = 'ASSIGNED',
+                    node_id = ?,
+                    started_at = ?,
+                    attempt_count = attempt_count + 1
+                WHERE chunk_id = ?
+                """,
+                (node_id, now, chunk_id)
+            )
+            # Add node_id to job's worker_nodes if not already present
+            chunk = conn.execute("SELECT job_id FROM chunks WHERE chunk_id = ?", (chunk_id,)).fetchone()
+            if chunk:
+                job_id = chunk["job_id"]
+                jrow = conn.execute("SELECT worker_nodes_json FROM jobs WHERE id = ?", (job_id,)).fetchone()
+                if jrow:
+                    try:
+                        workers = json.loads(jrow["worker_nodes_json"] or "[]")
+                    except Exception:
+                        workers = []
+                    if node_id not in workers:
+                        workers.append(node_id)
+                        conn.execute("UPDATE jobs SET worker_nodes_json = ? WHERE id = ?", (json.dumps(workers), job_id))
+            conn.commit()
+
+    def update_chunk_progress(self, chunk_id: str, downloaded_bytes: int, speed_bps: float):
+        with self.connection() as conn:
+            conn.execute(
+                """
+                UPDATE chunks SET
+                    downloaded_bytes = ?,
+                    speed_bps = ?,
+                    status = 'DOWNLOADING'
+                WHERE chunk_id = ?
+                """,
+                (downloaded_bytes, speed_bps, chunk_id)
+            )
+            chunk = conn.execute("SELECT job_id FROM chunks WHERE chunk_id = ?", (chunk_id,)).fetchone()
+            if chunk:
+                self._recalculate_job_progress(conn, chunk["job_id"])
+            conn.commit()
+
+    def complete_chunk(self, chunk_id: str, checksum: str, local_path: str):
+        with self.connection() as conn:
+            now = time.time()
+            conn.execute(
+                """
+                UPDATE chunks SET
+                    status = 'COMPLETE',
+                    checksum = ?,
+                    local_path = ?,
+                    completed_at = ?,
+                    downloaded_bytes = expected_length,
+                    speed_bps = 0.0
+                WHERE chunk_id = ?
+                """,
+                (checksum, local_path, now, chunk_id)
+            )
+            chunk = conn.execute("SELECT job_id FROM chunks WHERE chunk_id = ?", (chunk_id,)).fetchone()
+            if chunk:
+                self._recalculate_job_progress(conn, chunk["job_id"])
+            conn.commit()
+
+    def fail_or_requeue_chunk(self, chunk_id: str, status: str = "REQUEUED", reason: str = ""):
+        with self.connection() as conn:
+            conn.execute(
+                """
+                UPDATE chunks SET
+                    status = ?,
+                    node_id = CASE WHEN ? = 'REQUEUED' THEN NULL ELSE node_id END,
+                    speed_bps = 0.0
+                WHERE chunk_id = ?
+                """,
+                (status, status, chunk_id)
+            )
+            chunk = conn.execute("SELECT job_id FROM chunks WHERE chunk_id = ?", (chunk_id,)).fetchone()
+            if chunk:
+                self._recalculate_job_progress(conn, chunk["job_id"])
+            conn.commit()
+
+    def reassign_node_chunks_on_loss(self, node_id: str) -> int:
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT chunk_id, job_id FROM chunks
+                WHERE node_id = ? AND status IN ('ASSIGNED', 'DOWNLOADING')
+                """,
+                (node_id,)
+            ).fetchall()
+            if not rows:
+                return 0
+            conn.execute(
+                """
+                UPDATE chunks SET
+                    status = 'REQUEUED',
+                    node_id = NULL,
+                    speed_bps = 0.0
+                WHERE node_id = ? AND status IN ('ASSIGNED', 'DOWNLOADING')
+                """,
+                (node_id,)
+            )
+            for r in rows:
+                self._recalculate_job_progress(conn, r["job_id"])
+            conn.commit()
+            return len(rows)
+
+    def _recalculate_job_progress(self, conn, job_id: str):
+        stats = conn.execute(
+            """
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN status IN ('COMPLETE', 'VERIFIED') THEN 1 ELSE 0 END) as completed,
+                SUM(downloaded_bytes) as dl_bytes,
+                SUM(expected_length) as exp_bytes,
+                SUM(speed_bps) as total_speed
+            FROM chunks WHERE job_id = ?
+            """,
+            (job_id,)
+        ).fetchone()
+        if stats and stats["total"] > 0:
+            tot = stats["total"]
+            comp = stats["completed"] or 0
+            dl_bytes = stats["dl_bytes"] or 0
+            exp_bytes = stats["exp_bytes"] or 0
+            fleet_speed = stats["total_speed"] or 0.0
+            percent = (dl_bytes / exp_bytes * 100.0) if exp_bytes > 0 else 0.0
+            eta = int((exp_bytes - dl_bytes) / (fleet_speed / 8.0)) if fleet_speed > 0 and exp_bytes > dl_bytes else 0
+            
+            conn.execute(
+                """
+                UPDATE jobs SET
+                    chunks_total = ?,
+                    chunks_completed = ?,
+                    downloaded_bytes = ?,
+                    progress_percent = ?,
+                    current_speed_bps = ?,
+                    fleet_speed_bps = ?,
+                    eta_seconds = ?
+                WHERE id = ?
+                """,
+                (tot, comp, dl_bytes, round(percent, 1), fleet_speed, fleet_speed, eta, job_id)
+            )
+
+    # --- Transfer Tickets ---
+    def create_transfer_ticket(self, ticket: TransferTicket):
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO transfer_tickets (
+                    ticket_id, job_id, chunk_id, source_node, destination_node,
+                    expires_at, nonce, signature, used
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(ticket_id) DO NOTHING
+                """,
+                (
+                    ticket.ticket_id, ticket.job_id, ticket.chunk_id, ticket.source_node,
+                    ticket.destination_node, ticket.expires_at, ticket.nonce,
+                    ticket.signature, 1 if ticket.used else 0
+                )
+            )
+            conn.commit()
+
+    def get_transfer_ticket(self, ticket_id: str) -> Optional[TransferTicket]:
+        with self.connection() as conn:
+            row = conn.execute("SELECT * FROM transfer_tickets WHERE ticket_id = ?", (ticket_id,)).fetchone()
+            if not row:
+                return None
+            d = dict(row)
+            d["used"] = bool(d["used"])
+            return TransferTicket(**d)
+
+    def mark_ticket_used(self, ticket_id: str):
+        with self.connection() as conn:
+            conn.execute("UPDATE transfer_tickets SET used = 1 WHERE ticket_id = ?", (ticket_id,))
+            conn.commit()
+
+    # --- CyberStore Operations ---
+    def upsert_storage_object(self, object_hash: str, size_bytes: int, pinned: bool = False) -> StorageObject:
+        with self.connection() as conn:
+            now = time.time()
+            conn.execute(
+                """
+                INSERT INTO storage_objects (object_hash, size_bytes, reference_count, created_at, last_accessed_at, pinned)
+                VALUES (?, ?, 1, ?, ?, ?)
+                ON CONFLICT(object_hash) DO UPDATE SET
+                    last_accessed_at = excluded.last_accessed_at,
+                    reference_count = reference_count + 1
+                """,
+                (object_hash, size_bytes, now, now, 1 if pinned else 0)
+            )
+            conn.commit()
+            row = conn.execute("SELECT * FROM storage_objects WHERE object_hash = ?", (object_hash,)).fetchone()
+            d = dict(row)
+            d["pinned"] = bool(d["pinned"])
+            return StorageObject(**d)
+
+    def increment_object_ref(self, object_hash: str):
+        with self.connection() as conn:
+            conn.execute(
+                "UPDATE storage_objects SET reference_count = reference_count + 1, last_accessed_at = ? WHERE object_hash = ?",
+                (time.time(), object_hash)
+            )
+            conn.commit()
+
+    def decrement_object_ref(self, object_hash: str) -> int:
+        with self.connection() as conn:
+            conn.execute(
+                "UPDATE storage_objects SET reference_count = MAX(0, reference_count - 1), last_accessed_at = ? WHERE object_hash = ?",
+                (time.time(), object_hash)
+            )
+            conn.commit()
+            row = conn.execute("SELECT reference_count FROM storage_objects WHERE object_hash = ?", (object_hash,)).fetchone()
+            return row["reference_count"] if row else 0
+
+    def add_storage_replica(self, object_hash: str, node_id: str, local_rel_path: str, size_bytes: int):
+        with self.connection() as conn:
+            now = time.time()
+            conn.execute(
+                """
+                INSERT INTO storage_replicas (object_hash, node_id, local_rel_path, size_bytes, is_healthy, stored_at)
+                VALUES (?, ?, ?, ?, 1, ?)
+                ON CONFLICT(object_hash, node_id) DO UPDATE SET
+                    local_rel_path = excluded.local_rel_path,
+                    is_healthy = 1,
+                    stored_at = excluded.stored_at
+                """,
+                (object_hash, node_id, local_rel_path, size_bytes, now)
+            )
+            conn.execute(
+                "UPDATE nodes SET storage_used_bytes = (SELECT COALESCE(SUM(size_bytes), 0) FROM storage_replicas WHERE node_id = ?) WHERE id = ?",
+                (node_id, node_id)
+            )
+            conn.commit()
+
+    def get_storage_replicas(self, object_hash: str) -> List[Dict[str, Any]]:
+        with self.connection() as conn:
+            rows = conn.execute("SELECT * FROM storage_replicas WHERE object_hash = ?", (object_hash,)).fetchall()
+            return [dict(r) for r in rows]
+
+    def remove_storage_replica(self, object_hash: str, node_id: str):
+        with self.connection() as conn:
+            conn.execute("DELETE FROM storage_replicas WHERE object_hash = ? AND node_id = ?", (object_hash, node_id))
+            conn.execute(
+                "UPDATE nodes SET storage_used_bytes = (SELECT COALESCE(SUM(size_bytes), 0) FROM storage_replicas WHERE node_id = ?) WHERE id = ?",
+                (node_id, node_id)
+            )
+            conn.commit()
+
+    def create_stored_file(self, file_id: str, filename: str, size_bytes: int, final_hash: str, replication_factor: int, chunks: List[Dict[str, Any]]):
+        with self.connection() as conn:
+            now = time.time()
+            conn.execute(
+                """
+                INSERT INTO stored_files (file_id, filename, size_bytes, final_hash, replication_factor, created_at, status)
+                VALUES (?, ?, ?, ?, ?, ?, 'HEALTHY')
+                ON CONFLICT(file_id) DO UPDATE SET
+                    filename = excluded.filename,
+                    size_bytes = excluded.size_bytes,
+                    final_hash = excluded.final_hash
+                """,
+                (file_id, filename, size_bytes, final_hash, replication_factor, now)
+            )
+            for c in chunks:
+                conn.execute(
+                    """
+                    INSERT INTO stored_file_chunks (file_id, chunk_index, object_hash, start_byte, end_byte)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(file_id, chunk_index) DO UPDATE SET
+                        object_hash = excluded.object_hash,
+                        start_byte = excluded.start_byte,
+                        end_byte = excluded.end_byte
+                    """,
+                    (file_id, c["chunk_index"], c["object_hash"], c["start_byte"], c["end_byte"])
+                )
+            conn.commit()
+
+    def get_stored_file(self, file_id: str) -> Optional[Dict[str, Any]]:
+        with self.connection() as conn:
+            row = conn.execute("SELECT * FROM stored_files WHERE file_id = ?", (file_id,)).fetchone()
+            if not row:
+                return None
+            f = dict(row)
+            c_rows = conn.execute(
+                "SELECT * FROM stored_file_chunks WHERE file_id = ? ORDER BY chunk_index ASC",
+                (file_id,)
+            ).fetchall()
+            f["chunks"] = [dict(c) for c in c_rows]
+            return f
+
+    def list_stored_files(self) -> List[Dict[str, Any]]:
+        with self.connection() as conn:
+            rows = conn.execute("SELECT * FROM stored_files ORDER BY created_at DESC").fetchall()
+            return [dict(r) for r in rows]
+
+    def get_under_replicated_files(self) -> List[Dict[str, Any]]:
+        with self.connection() as conn:
+            files = self.list_stored_files()
+            under = []
+            for f in files:
+                desired = f.get("replication_factor", 2)
+                c_rows = conn.execute("SELECT object_hash FROM stored_file_chunks WHERE file_id = ?", (f["file_id"],)).fetchall()
+                min_reps = desired
+                for cr in c_rows:
+                    rep_count = conn.execute("SELECT COUNT(*) as c FROM storage_replicas WHERE object_hash = ? AND is_healthy = 1", (cr["object_hash"],)).fetchone()["c"]
+                    if rep_count < min_reps:
+                        min_reps = rep_count
+                if min_reps < desired:
+                    f["current_replicas"] = min_reps
+                    under.append(f)
+            return under
+
+    def get_cyberstore_summary(self) -> Dict[str, Any]:
+        with self.connection() as conn:
+            obj_stats = conn.execute(
+                "SELECT COUNT(*) as count, COALESCE(SUM(size_bytes), 0) as physical_bytes, COALESCE(SUM(size_bytes * reference_count), 0) as logical_bytes FROM storage_objects"
+            ).fetchone()
+            rep_stats = conn.execute("SELECT COUNT(*) as count FROM storage_replicas WHERE is_healthy = 1").fetchone()
+            file_count = conn.execute("SELECT COUNT(*) as count FROM stored_files").fetchone()["count"]
+            node_count = conn.execute("SELECT COUNT(*) as count FROM nodes WHERE status != 'REVOKED'").fetchone()["count"]
+            
+            phys = obj_stats["physical_bytes"] if obj_stats else 0
+            logi = obj_stats["logical_bytes"] if obj_stats else 0
+            dedup_saved = max(0, logi - phys)
+            
+            under_rep = len(self.get_under_replicated_files())
+            total_chunks = obj_stats["count"] if obj_stats else 0
+            healthy_pct = 100.0 if under_rep == 0 else round(max(0.0, 100.0 - (under_rep * 10.0)), 1)
+            
+            dedup_savings_pct = (dedup_saved / logi * 100.0) if logi > 0 else 0.0
+            return {
+                "total_files": file_count,
+                "total_stored_files": file_count,
+                "total_objects": total_chunks,
+                "total_unique_objects": total_chunks,
+                "total_replicas": rep_stats["count"] if rep_stats else 0,
+                "physical_bytes": phys,
+                "total_physical_bytes": phys,
+                "logical_bytes": logi,
+                "total_logical_bytes": logi,
+                "dedup_saved_bytes": dedup_saved,
+                "dedup_savings_percent": dedup_savings_pct,
+                "under_replicated_files": under_rep,
+                "healthy_chunks_percent": healthy_pct,
+                "storage_nodes_count": node_count,
+            }
+
+    def garbage_collect_objects(self, dry_run: bool = True) -> Dict[str, Any]:
+        with self.connection() as conn:
+            candidates = conn.execute(
+                "SELECT object_hash, size_bytes FROM storage_objects WHERE reference_count <= 0 AND pinned = 0"
+            ).fetchall()
+            hashes = [c["object_hash"] for c in candidates]
+            freed_bytes = sum(c["size_bytes"] for c in candidates)
+            
+            if not dry_run and hashes:
+                placeholders = ",".join("?" * len(hashes))
+                conn.execute(f"DELETE FROM storage_replicas WHERE object_hash IN ({placeholders})", hashes)
+                conn.execute(f"DELETE FROM storage_objects WHERE object_hash IN ({placeholders})", hashes)
+                conn.commit()
+            
+            return {
+                "dry_run": dry_run,
+                "candidate_count": len(hashes),
+                "reclaimable_bytes": freed_bytes,
+                "hashes": hashes[:50]
+            }
+
+    # --- Node Drain & Safe Removal ---
+    def drain_node(self, node_id: str, drained: bool = True):
+        with self.connection() as conn:
+            conn.execute("UPDATE nodes SET is_drained = ? WHERE id = ?", (1 if drained else 0, node_id))
+            conn.commit()
+
+    def is_node_drained(self, node_id: str) -> bool:
+        with self.connection() as conn:
+            row = conn.execute("SELECT is_drained FROM nodes WHERE id = ?", (node_id,)).fetchone()
+            return bool(row["is_drained"]) if row else False
+
+    def remove_node_safely(self, node_id: str, force: bool = False) -> Tuple[bool, str]:
+        with self.connection() as conn:
+            active = conn.execute("SELECT COUNT(*) as c FROM jobs WHERE node_id = ? AND status IN ('ASSIGNED', 'DOWNLOADING')", (node_id,)).fetchone()["c"]
+            active_chunks = conn.execute("SELECT COUNT(*) as c FROM chunks WHERE node_id = ? AND status IN ('ASSIGNED', 'DOWNLOADING')", (node_id,)).fetchone()["c"]
+            rep_rows = conn.execute("SELECT object_hash FROM storage_replicas WHERE node_id = ?", (node_id,)).fetchall()
+            unique_objects = 0
+            for r in rep_rows:
+                h = r["object_hash"]
+                count = conn.execute("SELECT COUNT(*) as c FROM storage_replicas WHERE object_hash = ?", (h,)).fetchone()["c"]
+                if count <= 1:
+                    unique_objects += 1
+            
+            if not force and (active > 0 or active_chunks > 0 or unique_objects > 0):
+                return False, f"Active transfers ({active} jobs, {active_chunks} chunks) or {unique_objects} unique replicas reside on this node."
+            
+            conn.execute("DELETE FROM storage_replicas WHERE node_id = ?", (node_id,))
+            conn.execute("UPDATE nodes SET status = 'REVOKED', is_drained = 1 WHERE id = ?", (node_id,))
+            conn.commit()
+            return True, f"Node {node_id} removed safely ({len(rep_rows)} replicas cleaned up)."

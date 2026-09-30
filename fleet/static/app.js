@@ -211,6 +211,18 @@ function renderJobs(jobs) {
     else if (j.status === 'DOWNLOADING') statusStyle = 'color: var(--primary); font-weight: 600;';
     else if (j.status === 'FAILED' || j.status === 'NODE_LOST') statusStyle = 'color: var(--danger); font-weight: 600;';
 
+    let modeBadge = '';
+    if (j.mode === 'BURST') {
+      modeBadge = `<span class="badge" style="background: rgba(255, 0, 85, 0.2); color: #ff0055; font-size: 0.65rem; margin-right: 4px; padding: 2px 5px; border-radius: 4px;">⚡ BURST</span>`;
+    } else if (j.mode === 'MIRROR') {
+      modeBadge = `<span class="badge" style="background: rgba(180, 0, 255, 0.2); color: #b400ff; font-size: 0.65rem; margin-right: 4px; padding: 2px 5px; border-radius: 4px;">🪞 MIRROR</span>`;
+    }
+
+    let chunkInfo = '';
+    if (j.mode === 'BURST' && j.chunks_total > 0) {
+      chunkInfo = `<div style="font-size: 0.7rem; color: var(--primary);">Assembled: ${j.chunks_completed || 0}/${j.chunks_total} chunks</div>`;
+    }
+
     let actions = '';
     if (j.status === 'COMPLETED') {
       actions += `<button class="action-btn" onclick="openShareModal('${j.id}')">DIRECT LINK</button> `;
@@ -224,7 +236,7 @@ function renderJobs(jobs) {
       <tr>
         <td>
           <div class="file-cell">
-            <span class="file-name">${escapeHtml(j.filename || 'downloading...')}</span>
+            <div>${modeBadge}<span class="file-name">${escapeHtml(j.filename || 'downloading...')}</span></div>
             <span class="file-meta" title="${escapeHtml(j.requested_url)}">${escapeHtml(truncate(j.requested_url, 45))}</span>
           </div>
         </td>
@@ -235,6 +247,7 @@ function renderJobs(jobs) {
             <div class="progress-bar-fill" style="width: ${pct}%;"></div>
           </div>
           <div style="font-size: 0.75rem; font-family: var(--font-mono);">${dlBytes} / ${totBytes} (${pct}%)</div>
+          ${chunkInfo}
         </td>
         <td>
           <div style="font-family: var(--font-mono); font-size: 0.8rem;">${curSpeed}</div>
@@ -251,9 +264,11 @@ function renderJobs(jobs) {
 async function submitDownload(e) {
   e.preventDefault();
   const input = document.getElementById('input-url');
+  const modeSelect = document.getElementById('select-mode');
   const btn = document.getElementById('btn-submit');
   const feedback = document.getElementById('intake-feedback');
   const url = input.value.trim();
+  const mode = modeSelect ? modeSelect.value : 'AUTO';
 
   if (!url) return;
 
@@ -261,18 +276,19 @@ async function submitDownload(e) {
   btn.innerText = 'PROBING...';
   feedback.style.display = 'block';
   feedback.style.color = 'var(--primary)';
-  feedback.innerText = 'Validating SSRF safety and probing remote file headers...';
+  feedback.innerText = `Validating SSRF safety and probing HTTP Range headers (${mode} mode)...`;
 
   try {
     const res = await fetch('/api/v1/jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: url })
+      body: JSON.stringify({ url: url, mode: mode })
     });
     const data = await res.json();
     if (res.ok && data.ok) {
       feedback.style.color = 'var(--success)';
-      feedback.innerText = `✔ Scheduled on node '${data.job.node_id}'. Transfer initializing.`;
+      const targetDesc = data.job.mode === 'BURST' ? `BURST cluster (${data.job.chunks_total} chunks)` : `'${data.job.node_id}'`;
+      feedback.innerText = `✔ Scheduled on ${targetDesc}. Transfer initializing.`;
       input.value = '';
       setTimeout(() => { feedback.style.display = 'none'; }, 4000);
     } else {
@@ -368,7 +384,95 @@ function escapeHtml(str) {
   })[m]);
 }
 
+// Phase 2: CyberStore Storage Controller
+async function loadCyberStore() {
+  try {
+    const sRes = await fetch('/api/v1/store/summary');
+    if (sRes.ok) {
+      const sData = await sRes.json();
+      const sum = sData.summary;
+      if (sum) {
+        const objEl = document.getElementById('store-stat-objects');
+        if (objEl) objEl.innerText = sum.total_unique_objects;
+        const physEl = document.getElementById('store-stat-physical');
+        if (physEl) physEl.innerText = formatBytes(sum.total_physical_bytes);
+        const logEl = document.getElementById('store-stat-logical');
+        if (logEl) logEl.innerText = 'Logical: ' + formatBytes(sum.total_logical_bytes);
+        const savEl = document.getElementById('store-stat-savings');
+        if (savEl) savEl.innerText = (sum.dedup_savings_percent || 0).toFixed(1) + '%';
+        const fileEl = document.getElementById('store-stat-files');
+        if (fileEl) fileEl.innerText = (sum.total_stored_files || 0) + ' files';
+        const hlthEl = document.getElementById('store-stat-health');
+        if (hlthEl) {
+          hlthEl.innerText = sum.under_replicated_files > 0 ? `${sum.under_replicated_files} under-replicated` : 'All replicas healthy';
+          hlthEl.style.color = sum.under_replicated_files > 0 ? 'var(--danger)' : 'var(--primary)';
+        }
+      }
+    }
+    const fRes = await fetch('/api/v1/store/files');
+    if (fRes.ok) {
+      const fData = await fRes.json();
+      renderStoreFiles(fData.files || []);
+    }
+  } catch (e) {
+    console.error('CyberStore fetch error:', e);
+  }
+}
+
+function renderStoreFiles(files) {
+  const tbody = document.getElementById('store-files-body');
+  if (!tbody) return;
+  if (files.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-dim); padding: 1.5rem;">No files ingested into CyberStore yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = files.map(f => `
+    <tr>
+      <td>
+        <div style="font-weight: 600;">${escapeHtml(f.filename)}</div>
+        <div style="font-size: 0.75rem; color: var(--text-dim); font-family: var(--font-mono);">${f.file_id}</div>
+      </td>
+      <td>${formatBytes(f.size_bytes)}</td>
+      <td><span class="badge" style="background: rgba(0, 240, 255, 0.15); color: var(--primary);">${f.chunks_count} chunks</span></td>
+      <td><span class="badge ${f.status === 'AVAILABLE' ? 'badge-online' : 'badge-degraded'}">${f.status}</span></td>
+      <td style="font-size: 0.75rem; color: var(--text-dim);">${formatTimeAgo(f.created_at)}</td>
+    </tr>
+  `).join('');
+}
+
+async function triggerStoreGC(dryRun) {
+  try {
+    const res = await fetch(`/api/v1/store/gc?dry_run=${dryRun}`, { method: 'POST' });
+    const data = await res.json();
+    alert(`CyberStore GC (Dry-Run: ${data.dry_run}):\nReclaimable: ${formatBytes(data.reclaimed_bytes)} across ${data.deleted_count} unreferenced objects.`);
+    loadCyberStore();
+  } catch (e) {
+    alert('GC failed: ' + e.message);
+  }
+}
+
+async function triggerStoreRebalance() {
+  try {
+    const res = await fetch('/api/v1/store/rebalance', { method: 'POST' });
+    const data = await res.json();
+    alert(`CyberStore Rebalance Complete.\nRepaired / re-replicated chunks: ${data.repaired_count}`);
+    loadCyberStore();
+  } catch (e) {
+    alert('Rebalance failed: ' + e.message);
+  }
+}
+
+async function drainNode(nodeId, drained) {
+  try {
+    await fetch(`/api/v1/nodes/${nodeId}/drain?drained=${drained}`, { method: 'POST' });
+  } catch (e) {
+    alert('Failed to drain node: ' + e.message);
+  }
+}
+
 // Initial bootstrap
 window.addEventListener('DOMContentLoaded', () => {
   connectWebSocket();
+  loadCyberStore();
+  setInterval(loadCyberStore, 6000);
 });

@@ -97,6 +97,12 @@ exec bash "${CYBERVPS_ROOT:-$HOME/cyberbackup}/cybervps.sh" transfer "$@"
 EOF
     chmod 0755 "${HOME}/bin/cybervps-transfer"
 
+    cat << 'EOF' > "${HOME}/bin/cybervps-store"
+#!/usr/bin/env bash
+exec bash "${CYBERVPS_ROOT:-$HOME/cyberbackup}/cybervps.sh" store "$@"
+EOF
+    chmod 0755 "${HOME}/bin/cybervps-store"
+
     setup_login_recovery
     return 0
 }
