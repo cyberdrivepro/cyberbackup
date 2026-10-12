@@ -27,6 +27,7 @@ chown
 chrt
 clear
 cloudflared
+cmp
 cmake
 command
 compgen

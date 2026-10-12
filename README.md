@@ -26,46 +26,42 @@ bash cybervps.sh
 Upon launch, CyberVPS inspects the host and renders the V4 interactive control center:
 
 ```
-╭──────────────────────────────────────────────────────────────────────────────╮
-│                   CYBERVPS • ROOTLESS CLOUD CONTROL CENTER                   │
-├──────────────────────────────────────────────────────────────────────────────┤
-│  Host: SoloA                          User: srhfqtos (Mode: ROOTLESS)        │
-│  OS:   Debian GNU/Linux 12 (bookworm) Arch: x86_64 (glibc 2.36)              │
-│  Home: /home/srhfqtos                                                        │
-╰──────────────────────────────────────────────────────────────────────────────╯
-  Capabilities: [✓ User-Space] [✓ Git] [✓ Net] [✓ Micromamba] [– Root] [– System Pkgs]
++------------------------------------------------------------------------------+
+|  CYBERVPS ULTRA v2.0.0          * ONLINE  <session-id>  [ ROOTLESS ]         |
+|  CyberVPS Universal Cloud Runtime & Control Center   Oct 12, 2026  08:28 AM  |
++------------------------------------------------------------------------------+
+|  Debian GNU/Linux 12   x86_64   4.00 vCPU   8192MB RAM   28531MB free        |
++------------------------------------------------------------------------------+
 
-╭─ RECOVERY ───────────────────────────────────────────────────────────────────╮
-│  [1] Restore Backup Snapshot                                                │
-│  [2] Fresh Install / Rootless Rebuild                                       │
-│  [3] Migrate Backup From Another VPS                                        │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭─ BACKUP & ARCHIVE ───────────────────────────────────────────────────────────╮
-│  [4] Create Backup Snapshot                                                 │
-│  [5] Upload Backup to Remote Storage                                        │
-│  [6] Download Backup from Remote Storage                                    │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭─ HOSTING & RUNTIME ──────────────────────────────────────────────────────────╮
-│  [7] Service Manager (Persistent 24/7 Daemons)                              │
-│  [8] Persistent Terminals (Session Manager)                                 │
-│  [9] Authenticated Web Terminal (Browser SSH)                               │
-│  [A] CyberVPS Ultra Auto Provisioning (Zero-Touch)                          │
-│  [S] Virtual Root Shell (root@cybervps:~#)                                  │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭─ REMOTE CONTROL & ACCESS ────────────────────────────────────────────────────╮
-│  [10] Telegram Bot Remote Control & Heartbeat                               │
-│  [11] Cloudflare Tunnels (Remote Access)                                    │
-│  [12] Background Jobs & Service Watchdog                                    │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭─ SYSTEM & TOOLS ─────────────────────────────────────────────────────────────╮
-│  [13] Run VPS Health Verification                                           │
-│  [14] View CyberVPS Status & Services                                       │
-│  [15] Configuration Manager                                                 │
-│  [16] Diagnostics & System Inspector                                        │
-│  [C]  CyberRoot Rootless Linux Runtime                                      │
-│  [R]  Self-Repair & Permission Normalizer                                   │
-╰──────────────────────────────────────────────────────────────────────────────╯
-  [0] Exit CyberVPS
++─ SYSTEM METRICS -----------------------------------------------------------+
+|  CPU     4.00 vCPU      RAM     1089 MB / 8192 MB   Disk    28531 MB free    |
+|  Mode    ROOTLESS            Network Online             Uptime  21m         |
++------------------------------------------------------------------------------+
+
++─ QUICK ACTIONS ------------------------------------------------------------+
+|  [A] Auto Provision       [S] Shell (Virtual Root)  [D] Doctor (Diagnostics)|
+|  [R] Restart Services     [L] View Logs             [U] Update CyberVPS     |
++------------------------------------------------------------------------------+
+
++─ HOSTING ------------------------------------------------------------------+
+|  [1] Applications (Restore Backup)     [4] Databases (Redis / SQLite)       |
+|  [2] Service Manager (Install/Rebuild) [5] Telegram Bot Remote              |
+|  [3] Web Hosting (Migrate Backup)      [6] Desktop / GUI Environment        |
++------------------------------------------------------------------------------+
+
++─ SYSTEM ------------------------------------------------------------------+
+|  [7] Persistent Terminals (Sessions)   [10] CyberRoot Linux Runtime         |
+|  [8] Network (Cloudflare Tunnels)      [11] CyberVM MicroVM Platform        |
+|  [9] Backups (Create Backup)           [12] Containers (Docker/Podman)      |
++------------------------------------------------------------------------------+
+
++─ MANAGEMENT ---------------------------------------------------------------+
+|  [13] Jobs (Background Jobs)           [16] Security & Secret Audit         |
+|  [14] Remote Access (SSH / RDP / Web)  [17] Configuration Manager           |
+|  [15] Fleet Nodes & Sync               [18] Diagnostics (Health Verify)     |
++------------------------------------------------------------------------------+
+
+  [0] Exit    [?] Help    [Ctrl+C] Cancel    • CyberVPS v2.0.0
 ```
 
 ---

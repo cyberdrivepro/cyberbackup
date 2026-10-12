@@ -13,7 +13,7 @@ from pathlib import Path
 import secrets
 import shutil
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import (
     Cookie,

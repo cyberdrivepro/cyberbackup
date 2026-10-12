@@ -6,7 +6,7 @@ and guards against dangerous schemes and malicious redirects.
 import ipaddress
 import re
 import socket
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 import urllib.parse
 
 # Cloud metadata addresses and special disallowed hostnames
@@ -49,7 +49,7 @@ DISALLOWED_NETWORKS = [
 ]
 
 
-def is_ip_disallowed(ip: ipaddress.IPv4Address | ipaddress.IPv6Address, allow_private: bool = False) -> Tuple[bool, str]:
+def is_ip_disallowed(ip: Union[ipaddress.IPv4Address, ipaddress.IPv6Address], allow_private: bool = False) -> Tuple[bool, str]:
     """Checks whether an IP address belongs to any forbidden subnet or metadata endpoint."""
     ip_str = str(ip)
     if ip_str in METADATA_IPS:
@@ -69,7 +69,7 @@ def is_ip_disallowed(ip: ipaddress.IPv4Address | ipaddress.IPv6Address, allow_pr
     return False, ""
 
 
-def resolve_hostname_ips(hostname: str) -> List[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+def resolve_hostname_ips(hostname: str) -> List[Union[ipaddress.IPv4Address, ipaddress.IPv6Address]]:
     """Resolves all IPv4 and IPv6 addresses for a hostname."""
     resolved_ips = []
     try:
