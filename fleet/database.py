@@ -9,7 +9,7 @@ from pathlib import Path
 import secrets
 import sqlite3
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from fleet.models import (
     JobRecord, JobStatus, JobMode, NodeRecord, NodeStatus,
     DownloadChunk, ChunkStatus, TransferTicket,

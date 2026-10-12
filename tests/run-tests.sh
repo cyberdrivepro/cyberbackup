@@ -18,7 +18,6 @@ for test_script in "$TEST_DIR"/test-*.sh "$TEST_DIR"/test_*.sh; do
     [ -f "$test_script" ] || continue
     test_name="$(basename "$test_script")"
     echo "Running: $test_name..."
-    chmod +x "$test_script"
     run_cmd="bash"
     if command -v timeout >/dev/null 2>&1; then
         run_cmd="timeout 45s bash"

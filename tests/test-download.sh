@@ -9,6 +9,14 @@ source "$REPO_DIR/lib/download.sh"
 export CYBERVPS_DOWNLOAD_RETRIES=1 CYBERVPS_DOWNLOAD_BACKOFF=0
 unset CYBERVPS_READ_ONLY
 passed=0
+# Byte-identical file check; falls back to sha256 digest when cmp (diffutils) is absent.
+files_equal() {
+    if command -v cmp >/dev/null 2>&1; then
+        cmp -s "$1" "$2"
+    else
+        [ "$(cyber_download_digest "$1")" = "$(cyber_download_digest "$2")" ]
+    fi
+}
 check() { if "$@"; then passed=$((passed + 1)); else printf 'FAIL: %s\n' "$*" >&2; exit 1; fi; }
 printf 'verified payload\n' > "$TEST_TMP/payload"
 expected="$(cyber_download_digest "$TEST_TMP/payload")"
@@ -40,21 +48,21 @@ wget() {
     cp "$TEST_TMP/payload" "$output"
 }
 cyber_download https://bad.example/artifact "$TEST_TMP/result" "$expected" https://good.example/artifact 2>"$TEST_TMP/errors"
-check cmp -s "$TEST_TMP/payload" "$TEST_TMP/result"
+check files_equal "$TEST_TMP/payload" "$TEST_TMP/result"
 check grep -q 'source.*https://good.example/artifact' "$TEST_TMP/result.source"
 check grep -q -- '--proto =https --proto-redir =https' "$TEST_TMP/curl-args"
 check test -z "$(find "$TEST_TMP" -name '*.part.*' -print -quit)"
 fixture_mode=mismatch
 rc=0; cyber_download https://good.example/artifact "$TEST_TMP/result" "$expected" 2>/dev/null || rc=$?
 check test "$rc" -eq 9
-check cmp -s "$TEST_TMP/payload" "$TEST_TMP/result"
+check files_equal "$TEST_TMP/payload" "$TEST_TMP/result"
 check test -z "$(find "$TEST_TMP" -name '*.part.*' -print -quit)"
 fixture_mode=wget
 cyber_download https://good.example/artifact "$TEST_TMP/wget-result" "$expected" 2>/dev/null
-check cmp -s "$TEST_TMP/payload" "$TEST_TMP/wget-result"
+check files_equal "$TEST_TMP/payload" "$TEST_TMP/wget-result"
 fixture_mode=ipv4
 cyber_download https://good.example/artifact "$TEST_TMP/v4-result" "$expected" 2>/dev/null
-check cmp -s "$TEST_TMP/payload" "$TEST_TMP/v4-result"
+check files_equal "$TEST_TMP/payload" "$TEST_TMP/v4-result"
 fixture_mode=downgrade
 rc=0; cyber_download https://good.example/artifact "$TEST_TMP/insecure" "$expected" 2>/dev/null || rc=$?
 check test "$rc" -eq 4

@@ -2,9 +2,13 @@
 """Reject interactive escalation, broad kills and unverified pipe-to-shell installs."""
 import sys
 from pathlib import Path
-from tree_sitter import Language, Parser
-import tree_sitter_bash
-from bash_audit import walk
+try:
+    from tree_sitter import Language, Parser
+    import tree_sitter_bash
+    from bash_audit import walk
+except ImportError as exc:
+    print(f"security_audit: missing dependency ({exc}); install with: pip install -r requirements.txt", file=sys.stderr)
+    sys.exit(2)
 
 root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent.parent
 parser = Parser(Language(tree_sitter_bash.language()))
